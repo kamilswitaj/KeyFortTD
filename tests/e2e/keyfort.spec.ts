@@ -245,4 +245,388 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await expect(page.getByTestId('mission-results-modal')).toBeVisible();
     await expect(page.getByTestId('results-title')).toContainText('TACTICAL VICTORY');
   });
+
+  test('keeps battlefield bounding rectangle stationary (<= 1px shift) across dynamic HUD/console mutations on 1280x720, 1366x768, 1440x900, and 1920x1080 in PL and EN', async ({
+    page,
+  }) => {
+    const viewports = [
+      { width: 1280, height: 720 },
+      { width: 1366, height: 768 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ];
+    const languages: Array<'pl' | 'en'> = ['pl', 'en'];
+
+    await page.goto('/');
+
+    for (const lang of languages) {
+      await page.evaluate((targetLang) => {
+        const app = window.__keyfortApp!;
+        const profile = app.persistence.getActiveProfile();
+        profile.settings.language = targetLang;
+        app.i18n.setLanguage(targetLang);
+        for (const mId of ['w1_m1', 'w1_m2']) {
+          profile.completedMissions[mId] = {
+            missionId: mId,
+            completed: true,
+            stars: 3,
+            bestAccuracy: 0.98,
+            bestWpm: 30,
+            bestScore: 2000,
+            timesCompleted: 1,
+          };
+        }
+        app.startMission('w1_m3', 'campaign');
+      }, lang);
+
+      await expect(page.getByTestId('gameplay-screen')).toBeVisible();
+
+      for (const vp of viewports) {
+        await page.setViewportSize(vp);
+
+        // Reset mission state cleanly for this viewport measurement
+        await page.evaluate(() => {
+          window.__keyfortApp!.startMission('w1_m3', 'campaign');
+        });
+
+        const canvas = page.getByTestId('battlefield-canvas');
+        await expect(canvas).toBeVisible();
+        const baselineBox = await canvas.boundingBox();
+        expect(baselineBox).not.toBeNull();
+
+        if (vp.width === 1440 && vp.height === 900) {
+          const vkBox = await page.getByTestId('virtual-keyboard').boundingBox();
+          expect(vkBox).not.toBeNull();
+          expect(vkBox!.y + vkBox!.height).toBeLessThanOrEqual(900);
+        }
+
+        const assertStationary = async (stepLabel: string) => {
+          const box = await canvas.boundingBox();
+          expect(box, `${lang} ${vp.width}x${vp.height} - ${stepLabel}`).not.toBeNull();
+          expect(
+            Math.abs(box!.x - baselineBox!.x),
+            `${lang} ${vp.width}x${vp.height} x shift on ${stepLabel}`
+          ).toBeLessThanOrEqual(1);
+          expect(
+            Math.abs(box!.y - baselineBox!.y),
+            `${lang} ${vp.width}x${vp.height} y shift on ${stepLabel}`
+          ).toBeLessThanOrEqual(1);
+          expect(
+            Math.abs(box!.width - baselineBox!.width),
+            `${lang} ${vp.width}x${vp.height} width shift on ${stepLabel}`
+          ).toBeLessThanOrEqual(1);
+          expect(
+            Math.abs(box!.height - baselineBox!.height),
+            `${lang} ${vp.width}x${vp.height} height shift on ${stepLabel}`
+          ).toBeLessThanOrEqual(1);
+        };
+
+        // 1. Gold transitions: 9, 99, 999, 9999
+        for (const goldVal of [9, 99, 999, 9999]) {
+          await page.evaluate((g) => {
+            const app = window.__keyfortApp!;
+            const s = app.getActiveSession()!;
+            const cur = s.economy.getGold();
+            if (g >= cur) s.economy.addGold(g - cur);
+            else s.economy.spendGold(cur - g);
+            app.updateGameplayHudInPlace();
+          }, goldVal);
+          await assertStationary(`gold=${goldVal}`);
+        }
+
+        // 2. Energy, Max Energy, and Power State transitions (baseline -> powered -> overcharged with countdown)
+        await page.evaluate(() => {
+          const app = window.__keyfortApp!;
+          const s = app.getActiveSession()!;
+          s.economy.consumeEnergy(s.economy.getEnergy()); // 0 energy -> baseline
+          app.updateGameplayHudInPlace();
+        });
+        await assertStationary('power=baseline');
+
+        await page.evaluate(() => {
+          const app = window.__keyfortApp!;
+          const s = app.getActiveSession()!;
+          s.economy.addEnergy(65); // powered
+          app.updateGameplayHudInPlace();
+        });
+        await assertStationary('power=powered');
+
+        await page.evaluate(() => {
+          const app = window.__keyfortApp!;
+          const s = app.getActiveSession()!;
+          s.economy.setBonusMaxEnergy(120);
+          s.economy.addEnergy(200);
+          s.economy.activateOverdrive(8); // overcharged with countdown
+          app.updateGameplayHudInPlace();
+        });
+        await assertStationary('power=overcharged');
+
+        // 3. Combo, Accuracy, WPM, and Ability cooldown countdowns
+        await page.evaluate(() => {
+          const app = window.__keyfortApp!;
+          const s = app.getActiveSession()!;
+          let now = Date.now();
+          for (let i = 0; i < 25; i++) {
+            const ch = s.typingEngine.getExpectedChar();
+            if (ch) s.handleKeyInput(ch, (now += 180), false);
+          }
+          s.handleKeyInput('z', (now += 180), false); // trigger error state too
+          s.triggerTacticalAbility('overdrive');
+          s.triggerTacticalAbility('emp');
+          s.triggerTacticalAbility('orbital');
+          s.update(1.2);
+          app.updateGameplayHudInPlace();
+        });
+        await assertStationary('combo-accuracy-wpm-cooldowns');
+
+        // 4. Pause and Resume
+        await page.evaluate(() => {
+          const app = window.__keyfortApp!;
+          const s = app.getActiveSession()!;
+          s.setPaused(true);
+          app.updateGameplayHudInPlace();
+        });
+        await assertStationary('paused');
+
+        await page.evaluate(() => {
+          const app = window.__keyfortApp!;
+          const s = app.getActiveSession()!;
+          s.setPaused(false);
+          app.updateGameplayHudInPlace();
+        });
+        await assertStationary('resumed');
+
+        // 5. Wave start, wave completion, upcoming wave composition, and educational objective completion
+        await page.evaluate(() => {
+          const app = window.__keyfortApp!;
+          const s = app.getActiveSession()!;
+          s.economy.addGold(2000);
+          s.buildTower('gun', 1);
+          s.buildTower('cannon', 2);
+          s.buildTower('gun', 3);
+          s.startNextWave();
+          app.updateGameplayHudInPlace();
+        });
+        await assertStationary('wave-started');
+
+        await page.evaluate(() => {
+          const app = window.__keyfortApp!;
+          const s = app.getActiveSession()!;
+          let guard = 0;
+          while (s.waveSystem.isWaveActive() && guard < 1500) {
+            s.update(0.1);
+            guard++;
+          }
+          let now = Date.now();
+          while (!s.isEducationalCompleted() && guard < 3000) {
+            const ch = s.typingEngine.getExpectedChar();
+            if (!ch) break;
+            s.handleKeyInput(ch, (now += 220), false);
+            guard++;
+          }
+          app.updateGameplayHudInPlace();
+        });
+        await assertStationary('wave-completed-and-educational-done');
+      }
+    }
+  });
+
+  test('supports 3-player family setup, mid-mission profile switch confirmation & abandoned session recording, reset confirmation modal, Survival/Sandbox retry preservation, and Family Dashboard comparisons', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    // 1. Open Profiles screen and configure 3 family profiles in one operation
+    await page.getByTestId('nav-profiles').click();
+    await expect(page.getByTestId('profiles-screen')).toBeVisible();
+
+    await page.getByTestId('family-setup-name-1').fill('Kondziu');
+    await page.getByTestId('family-setup-name-2').fill('Natalka');
+    await page.getByTestId('family-setup-name-3').fill('Kamil');
+    await page.getByTestId('family-setup-submit-btn').click();
+
+    await expect(page.getByTestId('active-profile-name')).toHaveText('Kondziu');
+
+    const profileIds = await page.evaluate(() =>
+      window.__keyfortApp!.persistence.getAllProfiles().map((p) => ({ id: p.id, name: p.name }))
+    );
+    expect(profileIds.map((p) => p.name)).toEqual(['Kondziu', 'Natalka', 'Kamil']);
+    const kondziuId = profileIds[0].id;
+    const natalkaId = profileIds[1].id;
+
+    // 2. Test destructive Reset confirmation modal (cancel keeps profile intact)
+    await page.getByTestId(`request-reset-${kondziuId}`).click();
+    await expect(page.getByTestId('confirm-profile-destructive-modal')).toBeVisible();
+    await page.getByTestId('cancel-destructive-profile-btn').click();
+    await expect(page.getByTestId('confirm-profile-destructive-modal')).toHaveCount(0);
+
+    // 3. Start a mission as Kondziu, type 15 characters, then attempt to switch to Natalka via header switcher
+    await page.getByTestId(`play-profile-${kondziuId}`).click();
+    await expect(page.getByTestId('campaign-map-screen')).toBeVisible();
+    await page.getByTestId('launch-mission-w1_m1').click();
+    await expect(page.getByTestId('gameplay-screen')).toBeVisible();
+
+    await page.evaluate(() => {
+      const s = window.__keyfortApp!.getActiveSession()!;
+      let now = Date.now();
+      for (let i = 0; i < 15; i++) {
+        const ch = s.typingEngine.getExpectedChar();
+        if (ch) s.handleKeyInput(ch, (now += 250), false);
+      }
+    });
+
+    // Select Natalka in the header switcher -> must open confirmation modal!
+    await page.getByTestId('header-profile-switcher').selectOption(natalkaId);
+    await expect(page.getByTestId('switch-profile-confirm-modal')).toBeVisible();
+
+    // Cancel first -> stays in mission as Kondziu
+    await page.getByTestId('cancel-switch-profile-btn').click();
+    await expect(page.getByTestId('gameplay-screen')).toBeVisible();
+    await expect(page.getByTestId('active-profile-name')).toHaveText('Kondziu');
+
+    // Now switch again and confirm -> records abandoned session for Kondziu without marking mission completed, switches to Natalka
+    await page.getByTestId('header-profile-switcher').selectOption(natalkaId);
+    await page.getByTestId('confirm-switch-profile-btn').click();
+    await expect(page.getByTestId('active-profile-name')).toHaveText('Natalka');
+
+    const kondziuData = await page.evaluate(
+      (id) => window.__keyfortApp!.persistence.getProfileById(id)!,
+      kondziuId
+    );
+    expect(kondziuData.sessionHistory.length).toBe(1);
+    expect(kondziuData.sessionHistory[0].status).toBe('abandoned');
+    expect(kondziuData.completedMissions.w1_m1).toBeUndefined();
+
+    // 4. Verify unplayed profile (Natalka) shows '—' accuracy and '0 s' practice time instead of 100% / 1 min
+    await page.getByTestId('nav-statistics').click();
+    await expect(page.getByTestId('stat-overall-accuracy')).toHaveText('—');
+    await expect(page.getByTestId('stat-practice-time')).toHaveText('0 s');
+
+    // 5. Complete w1_m1 as Natalka so Family Dashboard & Mission Leaderboard have competitive records
+    await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      app.startMission('w1_m1', 'campaign');
+      const s = app.getActiveSession()!;
+      s.economy.addGold(400);
+      s.buildTower('gun', 1);
+      s.buildTower('cannon', 2);
+      s.buildTower('gun', 3);
+      let now = Date.now();
+      while (!s.isEducationalCompleted()) {
+        const ch = s.typingEngine.getExpectedChar();
+        if (!ch) break;
+        s.handleKeyInput(ch, (now += 240), false);
+      }
+      let guard = 0;
+      while (!s.isSessionOver() && guard < 4000) {
+        if (!s.waveSystem.isWaveActive() && s.waveSystem.hasMoreWaves()) s.startNextWave();
+        s.update(0.1);
+        guard++;
+      }
+    });
+    await expect(page.getByTestId('mission-results-modal')).toBeVisible();
+    await page.getByTestId('results-back-map-btn').click();
+
+    // 6. Open Family Dashboard (Ranking rodzinny) and verify comparison table, sorting, SVG charts, and mission leaderboard
+    await page.getByTestId('nav-family-dashboard').click();
+    await expect(page.getByTestId('family-dashboard-screen')).toBeVisible();
+    await expect(page.getByTestId(`family-row-${kondziuId}`)).toBeVisible();
+    await expect(page.getByTestId(`family-row-${natalkaId}`)).toBeVisible();
+
+    // Sort by overallAccuracy
+    await page.getByTestId('family-sort-overallAccuracy').click();
+    await expect(page.getByTestId('comparison-charts-grid')).toBeVisible();
+    await expect(page.getByTestId('mission-leaderboard-table')).toBeVisible();
+
+    // 7. Verify Survival retry preserves selected map missionId
+    await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      app.startMission('w2_m2', 'survival');
+      const s = app.getActiveSession()!;
+      let guard = 0;
+      while (!s.isSessionOver() && guard < 5000) {
+        if (!s.waveSystem.isWaveActive()) s.startNextWave();
+        s.update(0.1);
+        guard++;
+      }
+    });
+    await expect(page.getByTestId('mission-results-modal')).toBeVisible();
+    await page.getByTestId('results-retry-btn').click();
+    const retryMissionId = await page.evaluate(
+      () => window.__keyfortApp!.getActiveSession()!.sourceMissionId
+    );
+    expect(retryMissionId).toBe('w2_m2');
+  });
+
+  test('dedicated viewport-aware fullscreen gameplay layout eliminates document scroll, fits battlefield, prompt and full keyboard simultaneously, and provides header controls', async ({
+    page,
+  }) => {
+    const desktopViewports = [
+      { width: 1280, height: 720 },
+      { width: 1366, height: 768 },
+      { width: 1440, height: 900 },
+      { width: 1600, height: 900 },
+      { width: 1920, height: 1080 },
+    ];
+
+    await page.goto('/');
+
+    for (const vp of desktopViewports) {
+      await page.setViewportSize(vp);
+
+      await page.evaluate(() => {
+        window.__keyfortApp!.startMission('w1_m1', 'campaign');
+      });
+
+      await expect(page.getByTestId('gameplay-screen')).toBeVisible();
+      await expect(page.getByTestId('gameplay-header')).toBeVisible();
+
+      // Top navigation must be replaced by compact gameplay header
+      await expect(page.locator('.top-header')).toHaveCount(0);
+
+      // Verify zero document-level scroll
+      const docScroll = await page.evaluate(() => ({
+        bodyHasClass: document.body.classList.contains('in-gameplay'),
+        scrollHeight: document.documentElement.scrollHeight,
+        innerHeight: window.innerHeight,
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+      }));
+      expect(docScroll.bodyHasClass).toBe(true);
+      expect(docScroll.scrollHeight, `${vp.width}x${vp.height} vertical overflow`).toBeLessThanOrEqual(docScroll.innerHeight);
+      expect(docScroll.scrollWidth, `${vp.width}x${vp.height} horizontal overflow`).toBeLessThanOrEqual(docScroll.innerWidth);
+
+      // Verify simultaneous visibility of battlefield, prompt, and complete keyboard inside viewport
+      const canvasBox = await page.getByTestId('battlefield-canvas').boundingBox();
+      const promptBox = await page.getByTestId('console-sequence-box').boundingBox();
+      const keyboardBox = await page.getByTestId('virtual-keyboard').boundingBox();
+
+      expect(canvasBox).not.toBeNull();
+      expect(promptBox).not.toBeNull();
+      expect(keyboardBox).not.toBeNull();
+
+      // Keyboard bottom must fit inside viewport
+      expect(keyboardBox!.y + keyboardBox!.height, `${vp.width}x${vp.height} keyboard bottom`).toBeLessThanOrEqual(vp.height);
+
+      // Column widths: main column (~70-78%), sidebar (~22-30%)
+      const layoutBox = await page.getByTestId('gameplay-screen').boundingBox();
+      const sidebarBox = await page.getByTestId('tactical-sidebar').boundingBox();
+      expect(layoutBox).not.toBeNull();
+      expect(sidebarBox).not.toBeNull();
+      const sidebarRatio = sidebarBox!.width / layoutBox!.width;
+      expect(sidebarRatio).toBeGreaterThanOrEqual(0.18);
+      expect(sidebarRatio).toBeLessThanOrEqual(0.32);
+
+      // In-game fullscreen toggle button and header pause
+      await page.getByTestId('toggle-fullscreen-btn').click();
+      await page.getByTestId('gameplay-header-pause-btn').click();
+      await expect(page.locator('#gameplay-header-status')).toContainText('WSTRZYMANA');
+      await page.getByTestId('gameplay-header-pause-btn').click();
+    }
+
+    // Exit gameplay via header exit button returns to campaign map
+    await page.getByTestId('exit-gameplay-btn').click();
+    await expect(page.getByTestId('campaign-map-screen')).toBeVisible();
+    await expect(page.locator('.top-header')).toBeVisible();
+  });
 });

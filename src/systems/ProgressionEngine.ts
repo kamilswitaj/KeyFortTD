@@ -1,5 +1,6 @@
 import { MISSIONS_DATA, WORLDS_DATA } from '../data/curriculumData';
 import {
+  DifficultyLevel,
   KeyLessonObjective,
   MasteryStatus,
   MissionDefinition,
@@ -7,6 +8,7 @@ import {
   SessionKeyStats,
   TowerType,
 } from '../types';
+import { StatisticsEngine } from './StatisticsEngine';
 
 export interface MissionOutcomeEvaluation {
   victory: boolean;
@@ -149,7 +151,13 @@ export class ProgressionEngine {
     typingAccuracy: number,
     wpm: number,
     maxCombo: number,
-    sessionKeyStats?: Record<string, SessionKeyStats>
+    sessionKeyStats?: Record<string, SessionKeyStats>,
+    options: {
+      durationSec?: number;
+      isUnrestrictedResources?: boolean;
+      unrestrictedResources?: boolean;
+      difficulty?: DifficultyLevel;
+    } = {}
   ): MissionOutcomeEvaluation {
     const tacticalVictory = remainingLives > 0;
     const edu = ProgressionEngine.checkEducationalCompletion(
@@ -234,6 +242,9 @@ export class ProgressionEngine {
 
     const baseXp = 110 + mission.globalIndex * 8 + stars * 35 + (mission.isBossMission ? 80 : 0);
     const score = Math.round(typedCorrectChars * 12 * typingAccuracy + remainingLives * 50 + maxCombo * 15);
+    const durationSec = options.durationSec ?? (wpm > 0 ? Math.round((typedCorrectChars / 5 / wpm) * 60) : 10);
+    const qualifyingWpm = StatisticsEngine.computeQualifyingWpm(typedCorrectChars, durationSec);
+    const difficulty = options.difficulty ?? profile.settings.difficulty ?? 'standard';
 
     const prevRecord = profile.completedMissions[mission.id];
     profile.completedMissions[mission.id] = {
@@ -242,9 +253,31 @@ export class ProgressionEngine {
       stars: prevRecord ? (Math.max(prevRecord.stars, stars) as 1 | 2 | 3) : stars,
       bestAccuracy: prevRecord ? Math.max(prevRecord.bestAccuracy, typingAccuracy) : typingAccuracy,
       bestWpm: prevRecord ? Math.max(prevRecord.bestWpm, wpm) : wpm,
+      bestQualifyingWpm:
+        qualifyingWpm !== null
+          ? prevRecord?.bestQualifyingWpm !== null && prevRecord?.bestQualifyingWpm !== undefined
+            ? Math.max(prevRecord.bestQualifyingWpm, qualifyingWpm)
+            : qualifyingWpm
+          : prevRecord?.bestQualifyingWpm ?? null,
       bestScore: prevRecord ? Math.max(prevRecord.bestScore, score) : score,
+      maxCombo: Math.max(prevRecord?.maxCombo ?? 0, maxCombo),
       timesCompleted: (prevRecord?.timesCompleted ?? 0) + 1,
+      byDifficulty: prevRecord?.byDifficulty ? { ...prevRecord.byDifficulty } : {},
     };
+
+    if (!options.isUnrestrictedResources && !options.unrestrictedResources) {
+      StatisticsEngine.updateMissionDifficultyRecord(
+        profile,
+        mission.id,
+        difficulty,
+        stars,
+        typingAccuracy,
+        wpm,
+        qualifyingWpm,
+        score,
+        maxCombo
+      );
+    }
 
     // Award XP & check level up
     const oldLevel = profile.level;

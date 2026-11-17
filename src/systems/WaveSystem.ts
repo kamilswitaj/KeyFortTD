@@ -26,6 +26,28 @@ export class WaveSystem {
     return Math.max(1, this.currentWaveIndex + 1);
   }
 
+  /**
+   * Returns the active wave number if a wave is in progress, or the next upcoming wave number
+   * when waiting between waves.
+   */
+  public getUpcomingOrActiveWaveNumber(): number {
+    if (this.waveActive) {
+      return this.currentWaveIndex + 1;
+    }
+    if (this.currentWaveIndex < 0) {
+      return 1;
+    }
+    if (this.hasMoreWaves()) {
+      return this.currentWaveIndex + 2;
+    }
+    return this.currentWaveIndex + 1;
+  }
+
+  public getCompletedWavesCount(): number {
+    if (this.currentWaveIndex < 0) return 0;
+    return this.waveActive ? this.currentWaveIndex : this.currentWaveIndex + 1;
+  }
+
   public getTotalWaves(): number {
     return this.isEndlessSurvival ? 999 : this.waves.length;
   }

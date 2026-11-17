@@ -4,8 +4,9 @@ import { PersistenceService } from '../../src/services/PersistenceService';
 import { AchievementSystem } from '../../src/systems/AchievementSystem';
 import { GameSessionEngine } from '../../src/systems/GameSessionEngine';
 import { ProgressionEngine } from '../../src/systems/ProgressionEngine';
+import { StatisticsEngine } from '../../src/systems/StatisticsEngine';
 
-describe('PersistenceService, Migration, ProgressionEngine, and AchievementSystem', () => {
+describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, and AchievementSystem', () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -19,7 +20,7 @@ describe('PersistenceService, Migration, ProgressionEngine, and AchievementSyste
     };
 
     const migrated = PersistenceService.migrateAndValidateSaveData(legacyV0);
-    expect(migrated.version).toBe(2);
+    expect(migrated.version).toBe(3);
     const active = migrated.profiles[migrated.activeProfileId];
     expect(active.name).toBe('Kamil_Legacy');
     expect(active.level).toBe(4);
@@ -29,6 +30,269 @@ describe('PersistenceService, Migration, ProgressionEngine, and AchievementSyste
     const badImport = service.importSaveJson('{corrupted_json!!');
     expect(badImport.success).toBe(false);
     expect(service.getActiveProfile().name).toBeDefined();
+  });
+
+  it('migrates v2 saves to v3 while preserving progress and reconstructing dailyStats from sessionHistory', () => {
+    const v2Save = {
+      version: 2,
+      activeProfileId: 'profile_default',
+      profiles: {
+        profile_default: {
+          id: 'profile_default',
+          name: 'Obrońca',
+          avatarIcon: '🛡️',
+          createdAt: 1700000000000,
+          lastActiveAt: 1700000500000,
+          level: 5,
+          xp: 450,
+          totalPracticeTimeSec: 180,
+          totalCharsTyped: 240,
+          totalCorrectChars: 228,
+          totalErrors: 12,
+          bestWpm: 38,
+          bestCombo: 45,
+          unlockedTowers: ['gun', 'cannon', 'frost'],
+          completedMissions: {
+            w1_m1: {
+              missionId: 'w1_m1',
+              completed: true,
+              stars: 3,
+              bestScore: 2800,
+              bestAccuracy: 0.96,
+              bestWpm: 34,
+              timesCompleted: 2,
+            },
+          },
+          characterMastery: {},
+          bigramStats: {},
+          achievements: ['first_defense'],
+          dailyStreak: 2,
+          lastPlayedDate: '2026-11-16',
+          sessionHistory: [
+            {
+              timestamp: new Date('2026-11-16T14:00:00Z').getTime(),
+              missionId: 'w1_m1',
+              mode: 'campaign',
+              victory: true,
+              charsTyped: 120,
+              errors: 5,
+              durationSec: 60,
+              accuracy: 120 / 125,
+              wpm: 24,
+              maxCombo: 45,
+              score: 2800,
+            },
+          ],
+          settings: {
+            language: 'pl',
+            musicVolume: 0.5,
+            sfxVolume: 0.7,
+            highContrast: false,
+            textSize: 'normal',
+            showFingerHints: true,
+            showVirtualKeyboard: true,
+            difficulty: 'standard',
+            typingAssistance: 'standard',
+          },
+        },
+      },
+    };
+
+    const migrated = PersistenceService.migrateAndValidateSaveData(v2Save);
+    expect(migrated.version).toBe(3);
+    const prof = migrated.profiles.profile_default;
+    expect(prof.level).toBe(5);
+    expect(prof.completedMissions.w1_m1.completed).toBe(true);
+    expect(prof.completedMissions.w1_m1.stars).toBe(3);
+    expect(prof.achievements).toEqual(['first_defense']);
+    expect(prof.sessionHistory.length).toBe(1);
+    expect(prof.sessionHistory[0].status).toBe('completed');
+    expect(Object.keys(prof.dailyStats).length).toBe(1);
+    const dayEntry = Object.values(prof.dailyStats)[0];
+    expect(dayEntry.correctChars).toBe(120);
+    expect(dayEntry.errorChars).toBe(5);
+    expect(dayEntry.practiceTimeSec).toBe(60);
+    expect(dayEntry.missionsCompleted).toBe(1);
+  });
+
+  it('supports quick 3-player family setup and assigns existing progress to Player 1 without duplication or loss', () => {
+    const service = new PersistenceService();
+    const defaultProf = service.getActiveProfile();
+    defaultProf.level = 6;
+    defaultProf.completedMissions.w1_m1 = {
+      missionId: 'w1_m1',
+      completed: true,
+      stars: 3,
+      bestScore: 2200,
+      bestAccuracy: 0.98,
+      bestWpm: 30,
+      timesCompleted: 1,
+    };
+    defaultProf.bestCombo = 88;
+    service.saveToStorage();
+
+    const created = service.setupFamilyProfiles(
+      [
+        { name: 'Gracz Pierwszy', avatarIcon: '🛡️' },
+        { name: 'Gracz Drugi', avatarIcon: '⚡' },
+        { name: 'Gracz Trzeci', avatarIcon: '🐉' },
+      ],
+      true
+    );
+
+    expect(created.length).toBe(3);
+    expect(service.getAllProfiles().length).toBe(3);
+
+    const p1 = service.getProfileById(defaultProf.id)!;
+    expect(p1.name).toBe('Gracz Pierwszy');
+    expect(p1.level).toBe(6);
+    expect(p1.completedMissions.w1_m1?.completed).toBe(true);
+    expect(p1.bestCombo).toBe(88);
+
+    const p2 = created[1];
+    expect(p2.name).toBe('Gracz Drugi');
+    expect(p2.level).toBe(1);
+    expect(Object.keys(p2.completedMissions)).toEqual([]);
+  });
+
+  it('validates profile identity and rejects mismatched profile-map keys and reserved property names', () => {
+    const service = new PersistenceService();
+    const active = service.getActiveProfile();
+    active.name = 'ChronionyProfil';
+    service.saveToStorage();
+
+    const mismatchedKeyPayload = JSON.stringify({
+      version: 3,
+      activeProfileId: 'key_one',
+      profiles: {
+        key_one: { id: 'different_id', name: 'Mismatch' },
+      },
+    });
+    expect(service.importSaveJson(mismatchedKeyPayload).success).toBe(false);
+
+    const reservedKeyPayload = JSON.stringify({
+      version: 3,
+      activeProfileId: 'constructor',
+      profiles: {
+        constructor: { id: 'constructor', name: 'Exploit' },
+      },
+    });
+    expect(service.importSaveJson(reservedKeyPayload).success).toBe(false);
+    expect(service.getActiveProfile().name).toBe('ChronionyProfil');
+  });
+
+  it('tracks immutable session ownerProfileId, enforces exactly-once finalization, and isolates profile progress', () => {
+    const service = new PersistenceService();
+    const p1 = service.getActiveProfile();
+    const p2 = service.createProfile('Siostra', '❄️');
+    service.switchProfile(p1.id);
+
+    const session = new GameSessionEngine({
+      mode: 'campaign',
+      mission: MISSIONS_DATA[0],
+      profile: p1,
+    });
+
+    expect(session.ownerProfileId).toBe(p1.id);
+    expect(session.isFinalized()).toBe(false);
+
+    // Even if active profile switches in PersistenceService, session.ownerProfileId remains p1.id
+    service.switchProfile(p2.id);
+    expect(session.ownerProfileId).toBe(p1.id);
+
+    expect(session.markFinalized()).toBe(true);
+    expect(session.isFinalized()).toBe(true);
+    // Second finalization attempt must return false
+    expect(session.markFinalized()).toBe(false);
+  });
+
+  it('calculates honest statistics without inflating unplayed profiles or tiny samples, and ranks mission leaderboards fairly', () => {
+    const unplayed = PersistenceService.createDefaultProfile('p_new', 'Nowy', '🛡️');
+    expect(StatisticsEngine.getOverallAccuracy(unplayed)).toBeNull();
+    expect(StatisticsEngine.getRecentWeightedWpm(unplayed)).toBeNull();
+    expect(StatisticsEngine.computeQualifyingWpm(10, 2)).toBeNull(); // below 20 chars / 4 sec threshold
+    expect(StatisticsEngine.computeQualifyingWpm(40, 16)).toBe(30); // 40 chars = 8 words in 16s = 30 WPM
+
+    const pA = PersistenceService.createDefaultProfile('p_a', 'Alfa', '🛡️');
+    const pB = PersistenceService.createDefaultProfile('p_b', 'Beta', '⚡');
+
+    // Record legitimate completed run on w1_m1 for pA (standard) and pB (standard)
+    ProgressionEngine.evaluateMissionResult(
+      MISSIONS_DATA[0],
+      pA,
+      20,
+      20,
+      65,
+      0.97,
+      28,
+      30,
+      undefined,
+      { difficulty: 'standard', durationSec: 30, unrestrictedResources: false }
+    );
+    ProgressionEngine.evaluateMissionResult(
+      MISSIONS_DATA[0],
+      pB,
+      19,
+      20,
+      60,
+      0.92,
+      24,
+      20,
+      undefined,
+      { difficulty: 'standard', durationSec: 30, unrestrictedResources: false }
+    );
+
+    // Unrestricted sandbox-like run on w1_m1 should NOT pollute competitive per-difficulty records
+    const pCheat = PersistenceService.createDefaultProfile('p_c', 'SandboxRunner', '🐉');
+    ProgressionEngine.evaluateMissionResult(
+      MISSIONS_DATA[0],
+      pCheat,
+      20,
+      20,
+      90,
+      1.0,
+      60,
+      90,
+      undefined,
+      { difficulty: 'standard', durationSec: 15, unrestrictedResources: true }
+    );
+
+    const board = StatisticsEngine.getMissionLeaderboard([pA, pB, pCheat], 'w1_m1', 'standard');
+    expect(board.length).toBe(2);
+    expect(board[0].profileId).toBe('p_a');
+    expect(board[1].profileId).toBe('p_b');
+
+    const familyRows = StatisticsEngine.buildFamilyComparisonRows([pA, pB, unplayed]);
+    expect(familyRows.length).toBe(3);
+    const unplayedRow = familyRows.find((r) => r.profileId === 'p_new')!;
+    expect(unplayedRow.overallAccuracy).toBeNull();
+    expect(unplayedRow.practiceTimeSec).toBe(0);
+  });
+
+  it('updates wave preview immediately when a wave completes', () => {
+    const profile = PersistenceService.createDefaultProfile();
+    const session = new GameSessionEngine({
+      mode: 'campaign',
+      mission: MISSIONS_DATA[0], // w1_m1 has 3 waves
+      profile,
+      unlimitedGold: true,
+    });
+
+    expect(session.getUpcomingWavePreview().waveNumber).toBe(1);
+    session.buildTower('gun', 1);
+    session.buildTower('cannon', 2);
+    session.buildTower('gun', 3);
+
+    session.startNextWave();
+    let guard = 0;
+    while (session.waveSystem.isWaveActive() && guard < 1500) {
+      session.update(0.1);
+      guard++;
+    }
+
+    // As soon as Wave 1 finishes, upcoming wave preview must show Wave 2
+    expect(session.waveSystem.isWaveActive()).toBe(false);
+    expect(session.getUpcomingWavePreview().waveNumber).toBe(2);
   });
 
   it('supports multiple local family profiles and JSON export/import roundtrip', () => {

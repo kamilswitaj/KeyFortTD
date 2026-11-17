@@ -6,16 +6,37 @@ import { PlayerProfile } from '../../types';
 import { escapeHtml } from '../../utils/escapeHtml';
 
 export class MainMenuView {
-  public static renderHtml(profile: PlayerProfile, allProfilesCount: number, i18n: LocalizationService): string {
+  public static renderHtml(
+    profile: PlayerProfile,
+    allProfiles: PlayerProfile[],
+    i18n: LocalizationService
+  ): string {
     const completedCount = Object.values(profile.completedMissions).filter((m) => m.completed).length;
     const nextMission =
       MISSIONS_DATA.find((m) => !profile.completedMissions[m.id]?.completed) ?? MISSIONS_DATA[0];
     const masteredCount = MasteryEngine.getMasteredCharacters(profile.characterMastery).length;
+    const allProfilesCount = allProfiles.length;
 
     const profilesCountText =
       i18n.getLanguage() === 'en'
         ? `${allProfilesCount} ${allProfilesCount === 1 ? 'profile' : 'profiles'}`
         : `${allProfilesCount} ${allProfilesCount === 1 ? 'profil' : allProfilesCount >= 2 && allProfilesCount <= 4 ? 'profile' : 'profili'}`;
+
+    const quickProfilePillsHtml = allProfiles
+      .map((p) => {
+        const isCurrent = p.id === profile.id;
+        return `
+          <button
+            class="nav-btn ${isCurrent ? 'active' : ''}"
+            data-switch-profile="${escapeHtml(p.id)}"
+            data-testid="menu-quick-switch-${escapeHtml(p.id)}"
+            title="${escapeHtml(i18n.pick('Przełącz gracza:', 'Switch player:'))} ${escapeHtml(p.name)}"
+          >
+            ${escapeHtml(p.avatarIcon)} ${escapeHtml(p.name)}
+          </button>
+        `;
+      })
+      .join('');
 
     return `
       <section class="menu-screen" data-testid="main-menu-screen">
@@ -28,8 +49,18 @@ export class MainMenuView {
               <button class="primary-cta-btn" data-action="quick-start-campaign" data-mission-id="${nextMission.id}" data-testid="quick-start-campaign-btn">
                 ▶ ${i18n.pick('Kontynuuj Misję', 'Continue Mission')} ${nextMission.worldId}.${nextMission.missionIndex}: ${escapeHtml(i18n.pick(nextMission.namePl, nextMission.nameEn))}
               </button>
-              <button class="nav-btn" data-nav="campaign_map" data-testid="open-campaign-map-btn" style="padding:0.72rem 1.25rem; font-size:0.95rem;">
+              <button class="nav-btn" data-nav="campaign_map" data-testid="open-campaign-map-btn" style="padding:0.68rem 1.15rem; font-size:0.9rem;">
                 🗺️ ${i18n.t('menu.campaign')} (${completedCount}/48)
+              </button>
+              <button class="nav-btn" data-nav="family_dashboard" data-testid="open-family-dashboard-btn" style="padding:0.68rem 1.15rem; font-size:0.9rem; border-color:#facc15; color:#fef08a;">
+                👨‍👩‍👧 ${i18n.pick('Ranking rodzinny', 'Family Dashboard')}
+              </button>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.4rem; margin-top:0.75rem; flex-wrap:wrap;" data-testid="menu-quick-player-bar">
+              <span style="font-size:0.76rem; color:#94a3b8;">👥 ${i18n.pick('Aktywny gracz:', 'Active player:')}</span>
+              ${quickProfilePillsHtml}
+              <button class="nav-btn" data-nav="profiles" data-testid="menu-manage-profiles-btn">
+                ⚙️ ${i18n.pick('Wybór Gracza', 'Select Player')}
               </button>
             </div>
           </div>
@@ -90,6 +121,14 @@ export class MainMenuView {
             <span style="color:#facc15; font-weight:700; font-size:0.84rem;">→ ${i18n.pick('Wszystkie 6 wież i ulepszenia T3', 'All 6 towers & Tier 3 upgrades')}</span>
           </div>
 
+          <div class="menu-card" data-nav="family_dashboard" data-testid="card-family-dashboard" style="border-top: 3px solid #f43f5e;">
+            <div>
+              <h3>👨‍👩‍👧 ${i18n.pick('Ranking rodzinny', 'Family Dashboard')}</h3>
+              <p style="margin-top:0.35rem;">${i18n.pick('Porównaj postępy graczy, wykresy WPM i celności oraz rekordy poszczególnych misji.', 'Compare family players, WPM/accuracy charts, and fair mission leaderboards.')}</p>
+            </div>
+            <span style="color:#fda4af; font-weight:700; font-size:0.84rem;">→ ${i18n.pick('Tabele, wykresy i rekordy misji', 'Tables, charts & mission records')}</span>
+          </div>
+
           <div class="menu-card" data-nav="statistics" data-testid="card-statistics" style="border-top: 3px solid #a855f7;">
             <div>
               <h3>📊 ${i18n.t('menu.statistics')}</h3>
@@ -98,20 +137,10 @@ export class MainMenuView {
             <span style="color:#c084fc; font-weight:700; font-size:0.84rem;">→ ${i18n.pick('Mapa cieplna klawiszy', 'Keyboard Mastery Heatmap')}</span>
           </div>
 
-          <div class="menu-card" data-nav="achievements" data-testid="card-achievements" style="border-top: 3px solid #f97316;">
-            <div>
-              <h3>🏆 ${i18n.t('menu.achievements')}</h3>
-              <p style="margin-top:0.35rem;">${i18n.pick('Zdobywaj odznaki bojowe oraz odblokowuj skórki wież i kolory laserów.', 'Earn tactical badges and unlock custom tower skins and laser beams.')}</p>
-            </div>
-            <span style="color:#fb923c; font-weight:700; font-size:0.84rem;">
-              🏅 ${profile.achievements.length} / ${ACHIEVEMENTS_DATA.length} ${i18n.pick('odblokowanych', 'unlocked')}
-            </span>
-          </div>
-
           <div class="menu-card" data-nav="profiles" data-testid="card-profiles" style="border-top: 3px solid #06b6d4;">
             <div>
               <h3>👥 ${i18n.t('menu.profiles')}</h3>
-              <p style="margin-top:0.35rem;">${i18n.pick('Przełączaj między lokalnymi profilami graczy oraz eksportuj lub importuj zapisy.', 'Switch between local player profiles and export or import save files.')}</p>
+              <p style="margin-top:0.35rem;">${i18n.pick('Konsolowy wybór gracza, szybka konfiguracja rodziny oraz kopie zapasowe JSON.', 'Console-style player select, quick family setup, and JSON backups.')}</p>
             </div>
             <span style="color:#38bdf8; font-weight:700; font-size:0.84rem;">→ ${profilesCountText}</span>
           </div>

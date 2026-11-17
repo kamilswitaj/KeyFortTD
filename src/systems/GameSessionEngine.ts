@@ -4,6 +4,7 @@ import { TOWERS_DATA } from '../data/towersData';
 import {
   ActiveEnemy,
   ActiveTower,
+  DifficultyLevel,
   EnemyType,
   FloatingTextEffect,
   GameMode,
@@ -30,9 +31,11 @@ import { WaveSystem } from './WaveSystem';
 export interface GameSessionConfig {
   mode: GameMode;
   mission: MissionDefinition;
+  sourceMissionId?: string;
   profile: PlayerProfile;
   unlimitedGold?: boolean;
   unlimitedEnergy?: boolean;
+  customAllowedKeys?: string[];
   initialGameSpeed?: number;
 }
 
@@ -62,6 +65,17 @@ const ENEMY_COUNTER_META: Record<
 };
 
 export class GameSessionEngine {
+  private static sessionSeq = 1;
+
+  public readonly sessionId: string;
+  public readonly ownerProfileId: string;
+  public readonly sourceMissionId: string;
+  public readonly difficulty: DifficultyLevel;
+  public readonly launchOptions: {
+    unlimitedGold?: boolean;
+    unlimitedEnergy?: boolean;
+    customAllowedKeys?: string[];
+  };
   public readonly mode: GameMode;
   public readonly mission: MissionDefinition;
   public readonly map: MapDefinition;
@@ -71,6 +85,7 @@ export class GameSessionEngine {
   public readonly typingEngine: TypingEngine;
 
   private profile: PlayerProfile;
+  private finalized: boolean = false;
   private towers: ActiveTower[] = [];
   private enemies: ActiveEnemy[] = [];
   private projectiles: ProjectileEffect[] = [];
@@ -96,6 +111,15 @@ export class GameSessionEngine {
   };
 
   constructor(config: GameSessionConfig) {
+    this.sessionId = `sess_${Date.now()}_${GameSessionEngine.sessionSeq++}`;
+    this.ownerProfileId = config.profile.id;
+    this.sourceMissionId = config.sourceMissionId ?? config.mission.id;
+    this.difficulty = config.profile.settings.difficulty ?? 'standard';
+    this.launchOptions = {
+      unlimitedGold: config.unlimitedGold,
+      unlimitedEnergy: config.unlimitedEnergy,
+      customAllowedKeys: config.customAllowedKeys,
+    };
     this.mode = config.mode;
     this.mission = config.mission;
     this.profile = config.mode === 'sandbox' ? structuredClone(config.profile) : config.profile;
@@ -127,6 +151,30 @@ export class GameSessionEngine {
 
   public getLives(): number {
     return this.lives;
+  }
+
+  public getOwnerProfile(): PlayerProfile {
+    return this.profile;
+  }
+
+  public isFinalized(): boolean {
+    return this.finalized;
+  }
+
+  public markFinalized(): boolean {
+    if (this.finalized) return false;
+    this.finalized = true;
+    return true;
+  }
+
+  public isUnrestrictedResources(): boolean {
+    return (
+      this.mode === 'sandbox' ||
+      this.economy.isUnlimitedGold() ||
+      this.economy.isUnlimitedEnergy() ||
+      Boolean(this.launchOptions.unlimitedGold) ||
+      Boolean(this.launchOptions.unlimitedEnergy)
+    );
   }
 
   public getMaxLives(): number {
@@ -270,9 +318,11 @@ export class GameSessionEngine {
    * Returns a preview of the current or upcoming wave's enemy groups and their counters.
    */
   public getUpcomingWavePreview(): { waveNumber: number; isBossWave: boolean; items: WaveEnemyPreviewItem[] } {
-    const waveNum = this.waveSystem.isWaveActive()
-      ? this.waveSystem.getCurrentWaveNumber()
-      : Math.min(this.mission.waves.length, this.waveSystem.getCurrentWaveNumber());
+    const rawUpcoming = this.waveSystem.getUpcomingOrActiveWaveNumber();
+    const waveNum =
+      this.mode === 'survival'
+        ? rawUpcoming
+        : Math.max(1, Math.min(this.mission.waves.length, rawUpcoming));
     const waveDef: WaveDefinition | undefined =
       this.mission.waves[waveNum - 1] ??
       (this.mode === 'survival' ? WaveSystem.generateSurvivalWave(waveNum) : this.mission.waves[0]);

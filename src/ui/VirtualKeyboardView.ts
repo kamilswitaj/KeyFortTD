@@ -46,8 +46,8 @@ export class VirtualKeyboardView {
             const isWrong = wrongLookup?.keyDef.code === k.code;
 
             const fingerMeta = FINGER_META[k.finger];
-            const cappedUnits = k.code === 'Space' ? 5.2 : Math.min(1.75, k.width ?? 1);
-            const widthEm = cappedUnits * 2.12;
+            const cappedUnits = k.code === 'Space' ? 5.0 : Math.min(1.7, k.width ?? 1);
+            const widthEm = cappedUnits * 1.98;
 
             const classes = ['vk-key'];
             if (isTargetMain && highlightExpected) classes.push('vk-key-expected');
@@ -118,6 +118,14 @@ export class VirtualKeyboardView {
                 : 'Recommended finger (browser events detect keys, not physical fingers)'
             }
           </span>
+        </div>
+      `;
+    } else if (showHandHints) {
+      hintBarHtml = `
+        <div class="vk-hint-bar">
+          <div class="vk-hint-pill">
+            <span>✓</span>
+          </div>
         </div>
       `;
     }

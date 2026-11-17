@@ -39,6 +39,12 @@ jobs:
       - name: Build static production bundle
         run: npm run build
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E regression tests
+        run: npm run test:e2e
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

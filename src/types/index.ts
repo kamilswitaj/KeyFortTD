@@ -9,6 +9,7 @@ export type ScreenId =
   | 'survival_setup'
   | 'sandbox_setup'
   | 'statistics'
+  | 'family_dashboard'
   | 'achievements'
   | 'profiles'
   | 'settings';
@@ -88,16 +89,52 @@ export interface BigramStats {
   avgTransitionMs: number;
 }
 
+export type SessionCompletionStatus = 'completed' | 'victory' | 'defeat' | 'abandoned';
+
+export type DifficultyLevel = 'relaxed' | 'standard' | 'tactical';
+
 export interface SessionHistoryEntry {
+  sessionId?: string;
+  profileId?: string;
   timestamp: number;
   missionId: string;
   mode: GameMode;
+  difficulty?: DifficultyLevel;
+  status?: SessionCompletionStatus;
+  tacticalVictory?: boolean;
+  educationalCompleted?: boolean;
   wpm: number;
+  qualifyingWpm?: number | null;
   accuracy: number;
   durationSec: number;
   charsTyped: number;
   errors: number;
   maxCombo: number;
+  score?: number;
+  stars?: 0 | 1 | 2 | 3;
+  wavesCompleted?: number;
+}
+
+export interface DailyPracticeAggregate {
+  date: string; // YYYY-MM-DD
+  practiceTimeSec: number;
+  correctChars: number;
+  errorChars: number;
+  sessionsCount: number;
+  missionsCompleted: number;
+  masteredCountSnapshot: number;
+}
+
+export interface DifficultyMissionRecord {
+  difficulty: DifficultyLevel;
+  completed: boolean;
+  stars: 0 | 1 | 2 | 3;
+  bestAccuracy: number;
+  bestWpm: number;
+  bestQualifyingWpm: number | null;
+  bestScore: number;
+  maxCombo: number;
+  timesCompleted: number;
 }
 
 export type TowerType = 'gun' | 'cannon' | 'frost' | 'tesla' | 'sniper' | 'reactor';
@@ -434,8 +471,11 @@ export interface MissionProgressRecord {
   stars: 0 | 1 | 2 | 3;
   bestAccuracy: number;
   bestWpm: number;
+  bestQualifyingWpm?: number | null;
   bestScore: number;
+  maxCombo?: number;
   timesCompleted: number;
+  byDifficulty?: Partial<Record<DifficultyLevel, DifficultyMissionRecord>>;
 }
 
 export interface AppSettings {
@@ -445,7 +485,7 @@ export interface AppSettings {
   animationIntensity: 'low' | 'normal' | 'high';
   reducedMotion: boolean;
   typingAssistance: 'full' | 'adaptive' | 'minimal';
-  difficulty: 'relaxed' | 'standard' | 'tactical';
+  difficulty: DifficultyLevel;
   textSize: 'normal' | 'large' | 'xlarge';
   defaultGameSpeed: 1 | 1.5 | 2;
   showFingerColors: boolean;
@@ -478,14 +518,17 @@ export interface PlayerProfile {
   totalCorrectChars: number;
   bestCombo: number;
   bestWpm: number;
+  bestQualifyingWpm?: number | null;
   characterMastery: Record<string, CharacterStats>;
   bigramMastery: Record<string, BigramStats>;
   sessionHistory: SessionHistoryEntry[];
+  dailyStats: Record<string, DailyPracticeAggregate>;
   settings: AppSettings;
 }
 
 export interface SaveDataSchema {
   version: number;
+  updatedAt?: number;
   activeProfileId: string;
   profiles: Record<string, PlayerProfile>;
 }
