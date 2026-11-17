@@ -1,35 +1,32 @@
-# KeyFort TD — Touch-Typing Curriculum & Adaptive Engine
+# KeyFort TD — Touch-Typing Curriculum & Adaptive Engine (V1.1)
 
 ## 1. Pedagogical Foundation
 
 The curriculum follows established touch-typing methodology tailored specifically for the **Polish Programmer QWERTY** keyboard layout (`Polski programisty`):
 - **Tactile Home Row Anchors First**: Players begin with index fingers on `F` and `J` (feeling the physical ridges), followed by the thumb on `Space`, middle fingers on `D` and `K`, ring fingers on `S` and `L`, pinkies on `A` and `;`, and lateral index reaches to `G` and `H`.
-- **Symmetric Finger-Pair Progression**: Upper and lower rows are never dumped all at once. Instead, keys are introduced in ergonomic finger pairs (e.g., middle fingers `E, I` -> index fingers `R, U` -> ring fingers `W, O` -> inner index `T, Y` -> pinkies `Q, P`).
-- **Strict Character Gatekeeping**: Every mission defines `newKeys` and cumulative `allowedKeys`. `AdaptiveLearningEngine.isStringAllowed()` verifies every single character of every candidate drill, syllable, word, or sentence so an unlearned character can **never** appear prematurely.
-- **Drill vs. Real Word Distinction**: Intentional finger-coordination drills are explicitly tagged (`isDrill: true`, badge `ĆWICZENIE PALCÓW (DRILL)`) to distinguish them from authentic Polish and English vocabulary (`SŁOWO / FRAZA BOJOWA`) and full sentences (`TRANSMISJA TAKTYCZNA`).
+- **Interactive Contextual Onboarding (Missions 1.1–1.3)**: New players are guided step-by-step through placing their first tower, feeling the `F`/`J` ridges, generating Energy through typing, reading the incoming wave preview, and purchasing upgrades without intrusive modal popups.
+- **Symmetric Finger-Pair Progression**: Upper and lower rows are introduced in ergonomic finger pairs (`E, I` -> `R, U` -> `W, O` -> `T, Y` -> `Q, P`).
+- **Strict Character Gatekeeping**: Every mission defines `newKeys` and cumulative `allowedKeys`. `AdaptiveLearningEngine` validates both candidate selection and final output strings so an unlearned character can **never** appear in any game mode (`campaign`, `survival`, `sandbox`).
+- **Natural Polish Vocabulary & Sentences**: When playing in Polish (`pl`), exercises draw exclusively from curated natural Polish words (`REAL_WORDS_PL`) and grammatically meaningful Polish sentences (`SENTENCES_PL`) matched to each world's exact character set.
 
-## 2. World-by-World Curriculum Map (48 Missions)
+## 2. Separated Progression Semantics
 
-| World | Missions | New Keys Introduced | Pedagogical Focus |
-|---|---|---|---|
-| **1. Green Valley** | 1.1 – 1.6 | `f, j, Space, d, k` | Home-row index & middle finger anchors, thumb rhythm |
-| **2. Dark Forest** | 2.1 – 2.6 | `s, l, a, ;, g, h` | Complete home row, lateral reaches, first real words (`las, fala, sala, skala`) |
-| **3. Mountain Pass** | 3.1 – 3.6 | `e, i, r, u, w, o, t, y, q, p` | Upper row finger-pair ascents and return-to-home discipline |
-| **4. Desert Outpost** | 4.1 – 4.6 | `v, m, c, ,, b, n, x, ., z, /` | Lower row finger-pair descents; completion of all 26 base letters |
-| **5. Frozen Islands** | 5.1 – 5.6 | *(Consolidation)* | High-frequency bigrams (`cz, sz, rz, pr, st`), alternating hands, multi-word phrases |
-| **6. Ancient Ruins** | 6.1 – 6.6 | `ą, ę, ł, ó, ś, ć, ń, ż, ź` | Polish diacritical characters using Right Alt (`AltGr`) |
-| **7. Industrial City** | 7.1 – 7.6 | `A–Z, Ł, Ś, Ż, 1–0, -, :, !, ?` | Opposite-hand `Shift` rule, number row (`1–5` left, `6–0` right), tactical punctuation |
-| **8. Final Fortress** | 8.1 – 8.6 | *(Full Fluency)* | Complete sentences, proverbs, telemetry reports, error recovery, and high accuracy |
+KeyFort TD separates four distinct educational and gameplay concepts throughout `GameSessionEngine`, `ProgressionEngine`, and the UI:
+1. **Tactical Victory (`tacticalVictory`)**: Defending the KeyFort (`remainingLives > 0`) through all enemy waves.
+2. **Educational Completion (`educationalCompleted`)**:
+   - Typing at least `minRequiredChars` with at least `minAccuracy`.
+   - Completing individual **Key Lesson Objectives (`KeyLessonObjective`)** for each newly introduced key (`newKeys`), requiring sufficient accurate presses on every new key before the lesson is complete.
+3. **Follow-Up Practice Activity (`inFollowUpPractice`)**:
+   - If the player wins the tactical battle (`tacticalVictory === true`) but has not yet completed all educational key objectives, the game offers an immediate, short **Follow-Up Key Practice** drill targeting the exact unmet keys rather than forcing a replay of the entire battle.
+4. **Long-Term Mastery (`MasteryStatus`) & Mission Rating (`stars: 1..3`)**:
+   - **Mastery** (`locked | learning | practicing | mastered`) tracks long-term proficiency across sessions and requires `>= 20` lifetime attempts, `>= 90%` accuracy, and `<= 950ms` reaction time.
+   - **Mission Rating** (`1–3 ⭐`) rewards combined tactical defense (`remainingLives / startingLives`) and typing precision.
 
-## 3. Adaptive Learning & Mastery Model
+## 3. Adaptive Learning with Character & Bigram Statistics
 
-`MasteryEngine` tracks for each character:
-- Total attempts, correct keystrokes, errors, consecutive streak, and confusion matrix (`confusedWith`).
-- Exponential Moving Average (EMA) reaction time (`avgReactionMs`).
-- Mastery Score (`0..100`) combining accuracy, reaction speed, streak, and an attempt volume factor (`min(1, attempts / 20)`).
-- A character is only classified as **`mastered`** when:
-  - `attempts >= 20`
-  - `accuracy >= 90%`
-  - `avgReactionMs <= 950ms`
-  - `masteryScore >= 78`
-- `AdaptiveLearningEngine` dynamically increases selection weights for newly introduced keys, keys with accuracy `< 90%`, keys with slow reaction times, and mastered keys whose spaced-repetition review timestamp (`nextReviewAt`) has elapsed.
+`AdaptiveLearningEngine` selects drills, syllables, words, and sentences deterministically using:
+- **Character Accuracy & Reaction Time**: Boosts keys with accuracy `< 90%` or slow reaction times (`> 620ms`).
+- **Bigram Accuracy & Transition Time (`computeBigramWeights`)**: Boosts character pairs (`ab`) with high error rates or slow finger transitions (`avgTransitionMs > 520ms`).
+- **Recently Introduced Keys & Spaced Repetition**: Prioritizes newly unlocked keys and mastered keys whose `nextReviewAt` timestamp has elapsed.
+- **Anti-Monotony History Filter**: Penalizes recently displayed prompts (`recentPromptTexts`) so consecutive sequences remain varied and engaging.
+- **Idle-Break Timing Protection**: `TypingEngine` treats any pause `> 2500ms` (or `window` `blur` / tower management interaction) as a planning break so tower placement never distorts reaction time or WPM statistics.

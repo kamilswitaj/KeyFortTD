@@ -14,7 +14,13 @@ function bootstrap(): void {
     throw new Error('Missing #app root element');
   }
   const controller = new AppController(appRoot);
-  if (import.meta.env.DEV) window.__keyfortApp = controller;
+  if (
+    import.meta.env.DEV ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  ) {
+    window.__keyfortApp = controller;
+  }
 }
 
 if (document.readyState === 'loading') {

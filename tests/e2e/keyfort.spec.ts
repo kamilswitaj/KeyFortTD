@@ -1,9 +1,15 @@
 import { expect, test } from '@playwright/test';
 
 test.describe('KeyFort TD — Complete E2E Suite', () => {
-  test('starts campaign, builds & upgrades towers, generates energy via typing, and wins Mission 1', async ({
+  test('starts campaign, verifies onboarding & wave preview, fits 1440x900, builds & upgrades towers, and wins Mission 1', async ({
     page,
   }) => {
+    const consoleErrors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text());
+    });
+    page.on('pageerror', (err) => consoleErrors.push(err.message));
+
     await page.goto('/');
 
     // Default language should be Polish ('pl')
@@ -22,6 +28,14 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await expect(page.getByTestId('battlefield-canvas')).toBeVisible();
     await expect(page.getByTestId('typing-console')).toBeVisible();
     await expect(page.getByTestId('virtual-keyboard')).toBeVisible();
+    await expect(page.getByTestId('onboarding-banner')).toBeVisible();
+    await expect(page.getByTestId('wave-preview-bar')).toBeVisible();
+    await expect(page.getByTestId('key-objectives-bar')).toBeVisible();
+
+    // Verify both Battlefield Canvas and Virtual Keyboard are simultaneously visible inside 1440x900
+    const vkBox = await page.getByTestId('virtual-keyboard').boundingBox();
+    expect(vkBox).not.toBeNull();
+    expect(vkBox!.y + vkBox!.height).toBeLessThanOrEqual(900);
 
     // Build a Gun Tower on Pad #1
     await page.getByTestId('build-tower-gun').click();
@@ -52,9 +66,9 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
       session.buildTower('cannon', 2);
       session.buildTower('gun', 3);
 
-      // Type until required chars are met
+      // Type until required chars and per-key objectives are met
       let now = Date.now();
-      while (session.typingEngine.getTotalCorrect() < session.getRequiredCharsForVictory() + 5) {
+      while (!session.isEducationalCompleted()) {
         const ch = session.typingEngine.getExpectedChar();
         if (!ch) break;
         session.handleKeyInput(ch, (now += 280), false);
@@ -71,9 +85,9 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
       }
     });
 
-    // Wait for next animation frame to trigger results modal
     await expect(page.getByTestId('mission-results-modal')).toBeVisible();
     await expect(page.getByTestId('results-title')).toContainText('ZWYCIĘSTWO');
+    expect(consoleErrors).toEqual([]);
   });
 
   test('does not launch a locked campaign mission or count browser shortcuts as typing', async ({ page }) => {
@@ -81,10 +95,11 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await page.evaluate(() => window.__keyfortApp!.startMission('w1_m6'));
     await expect(page.getByTestId('main-menu-screen')).toBeVisible();
     await page.getByTestId('quick-start-campaign-btn').click();
-    const attempts = () => page.evaluate(() => window.__keyfortApp!.getActiveSession()!.typingEngine.getTotalAttempts());
+    const attempts = () =>
+      page.evaluate(() => window.__keyfortApp!.getActiveSession()!.typingEngine.getTotalAttempts());
     const before = await attempts();
-    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', {key: 'a', ctrlKey: true})));
-    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', {key: 'f', isComposing: true})));
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true })));
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', isComposing: true })));
     expect(await attempts()).toBe(before);
   });
 
@@ -98,6 +113,40 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await expect(page.locator('#injected-profile')).toHaveCount(0);
     const save = JSON.parse(await page.getByTestId('save-json-textarea').inputValue());
     expect(save.profiles[save.activeProfileId].name).toBe(name);
+  });
+
+  test('triggers follow-up practice activity when waves are cleared before educational objectives complete', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.getByTestId('quick-start-campaign-btn').click();
+    await expect(page.getByTestId('gameplay-screen')).toBeVisible();
+
+    // Clear all waves while typing only 6 chars -> should enter follow-up practice mode!
+    await page.evaluate(() => {
+      const session = window.__keyfortApp!.getActiveSession()!;
+      session.economy.addGold(500);
+      session.buildTower('gun', 1);
+      session.buildTower('cannon', 2);
+      session.buildTower('gun', 3);
+
+      let now = Date.now();
+      for (let i = 0; i < 6; i++) {
+        const ch = session.typingEngine.getExpectedChar();
+        if (ch) session.handleKeyInput(ch, (now += 280), false);
+      }
+
+      let safety = 0;
+      while (!session.areAllWavesCleared() && safety < 4000) {
+        if (!session.waveSystem.isWaveActive() && session.waveSystem.hasMoreWaves()) {
+          session.startNextWave();
+        }
+        session.update(0.1);
+        safety++;
+      }
+    });
+
+    await expect(page.getByTestId('followup-practice-banner')).toBeVisible();
   });
 
   test('handles losing a mission when base HP reaches 0', async ({ page }) => {
@@ -153,7 +202,13 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
       for (let i = 1; i <= 5; i++) {
         const missionId = `w1_m${i}`;
         profile.completedMissions[missionId] = {
-          missionId, completed: true, stars: 3, bestAccuracy: 1, bestWpm: 25, bestScore: 1000, timesCompleted: 1,
+          missionId,
+          completed: true,
+          stars: 3,
+          bestAccuracy: 1,
+          bestWpm: 25,
+          bestScore: 1000,
+          timesCompleted: 1,
         };
       }
       app.startMission('w1_m6', 'campaign', { unlimitedGold: true });
@@ -171,7 +226,7 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
       }
 
       let now = Date.now();
-      while (session.typingEngine.getTotalCorrect() < session.getRequiredCharsForVictory() + 10) {
+      while (!session.isEducationalCompleted()) {
         const ch = session.typingEngine.getExpectedChar();
         if (!ch) break;
         session.handleKeyInput(ch, (now += 250), false);

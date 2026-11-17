@@ -46,7 +46,8 @@ export class VirtualKeyboardView {
             const isWrong = wrongLookup?.keyDef.code === k.code;
 
             const fingerMeta = FINGER_META[k.finger];
-            const widthEm = (k.width ?? 1) * 2.55;
+            const cappedUnits = k.code === 'Space' ? 5.2 : Math.min(1.75, k.width ?? 1);
+            const widthEm = cappedUnits * 2.12;
 
             const classes = ['vk-key'];
             if (isTargetMain && highlightExpected) classes.push('vk-key-expected');
