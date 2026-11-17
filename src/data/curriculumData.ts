@@ -862,18 +862,18 @@ const MISSION_SPECS: MissionSeedSpec[] = [
 function buildWavesForMission(worldId: number, missionIndex: number, globalIndex: number): WaveDefinition[] {
   const isBoss = missionIndex === 6;
   const totalWaves = isBoss ? 5 : 3 + Math.floor((missionIndex - 1) / 2); // 3 to 5 waves per mission keeps missions snappy (3-6 mins)
-  const hpMultiplierBase = 0.85 + (globalIndex - 1) * 0.055;
+  const hpMultiplierBase = 0.8 + (globalIndex - 1) * 0.026;
   const waves: WaveDefinition[] = [];
 
   for (let w = 1; w <= totalWaves; w++) {
-    const waveScale = hpMultiplierBase * (1 + (w - 1) * 0.14);
+    const waveScale = hpMultiplierBase * (1 + (w - 1) * 0.1);
     const groups: WaveSpawnGroup[] = [];
 
     // Primary group: Scouts or Swarms
     if (worldId === 1) {
       groups.push({
         enemyType: 'scout',
-        count: 5 + w * 2 + missionIndex,
+        count: 5 + w * 2 + Math.floor(missionIndex / 2),
         intervalSec: 1.35,
         delayBeforeSec: 0.5,
         hpScale: waveScale,
@@ -890,15 +890,15 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
     } else if (worldId === 2) {
       groups.push({
         enemyType: w % 2 === 1 ? 'scout' : 'swarm',
-        count: 7 + w * 2 + missionIndex,
-        intervalSec: 1.0,
+        count: 6 + w * 2 + Math.floor(missionIndex / 2),
+        intervalSec: 1.05,
         delayBeforeSec: 0.4,
         hpScale: waveScale,
       });
       if (w >= 2) {
         groups.push({
           enemyType: missionIndex >= 3 ? 'regenerator' : 'tank',
-          count: 2 + Math.floor(w / 2),
+          count: 1 + Math.floor(w / 2),
           intervalSec: 2.5,
           delayBeforeSec: 2.0,
           hpScale: waveScale,
@@ -907,24 +907,24 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
     } else if (worldId === 3) {
       groups.push({
         enemyType: 'shield',
-        count: 4 + w + Math.floor(missionIndex / 2),
-        intervalSec: 1.6,
+        count: 3 + w + Math.floor(missionIndex / 2),
+        intervalSec: 1.65,
         delayBeforeSec: 0.5,
         hpScale: waveScale,
       });
       if (missionIndex >= 2 && w >= 2) {
         groups.push({
           enemyType: 'ghost',
-          count: 2 + w,
-          intervalSec: 1.9,
-          delayBeforeSec: 1.8,
-          hpScale: waveScale,
+          count: 1 + Math.floor(w / 2),
+          intervalSec: 2.2,
+          delayBeforeSec: 2.0,
+          hpScale: waveScale * 0.9,
         });
       } else {
         groups.push({
           enemyType: 'swarm',
-          count: 8 + w * 2,
-          intervalSec: 0.85,
+          count: 7 + w * 2,
+          intervalSec: 0.9,
           delayBeforeSec: 1.5,
           hpScale: waveScale,
         });
@@ -932,34 +932,43 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
     } else if (worldId === 4) {
       groups.push({
         enemyType: 'splitter',
-        count: 3 + w + Math.floor(missionIndex / 2),
-        intervalSec: 1.9,
+        count: 3 + w,
+        intervalSec: 2.0,
         delayBeforeSec: 0.5,
         hpScale: waveScale,
       });
       groups.push({
         enemyType: w % 2 === 0 ? 'tank' : 'shield',
-        count: 3 + w,
-        intervalSec: 2.1,
+        count: 2 + Math.floor(w / 2),
+        intervalSec: 2.2,
         delayBeforeSec: 2.0,
         hpScale: waveScale,
       });
     } else {
-      // Worlds 5..8: rich tactical mix
+      // Worlds 5..8: rich tactical mix with archetype-appropriate squad sizes
       const pool: EnemyType[] = ['scout', 'swarm', 'shield', 'tank', 'ghost', 'splitter', 'regenerator'];
-      const primary = pool[(globalIndex + w) % pool.length];
+      let primary = pool[(globalIndex + w) % pool.length];
+      if (w === 1 && primary === 'ghost') {
+        primary = 'shield';
+      }
       const secondary = pool[(globalIndex + w + 2) % pool.length];
+      const countForType = (t: EnemyType, isPrimary: boolean): number => {
+        if (t === 'swarm') return (isPrimary ? 8 : 6) + w * 2;
+        if (t === 'scout') return (isPrimary ? 5 : 4) + w;
+        if (t === 'tank' || t === 'ghost') return (isPrimary ? 2 : 1) + Math.floor(w / 2);
+        return (isPrimary ? 3 : 2) + Math.floor(w / 2);
+      };
       groups.push({
         enemyType: primary,
-        count: primary === 'swarm' ? 12 + w * 3 : 6 + w * 2,
-        intervalSec: primary === 'swarm' ? 0.75 : 1.35,
+        count: countForType(primary, true),
+        intervalSec: primary === 'swarm' ? 0.85 : 1.55,
         delayBeforeSec: 0.5,
         hpScale: waveScale,
       });
       groups.push({
         enemyType: secondary,
-        count: secondary === 'tank' ? 3 + Math.floor(w / 2) : 5 + w,
-        intervalSec: 1.8,
+        count: countForType(secondary, false),
+        intervalSec: 1.95,
         delayBeforeSec: 2.0,
         hpScale: waveScale,
       });
@@ -971,7 +980,7 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
         count: 1,
         intervalSec: 4.0,
         delayBeforeSec: 3.0,
-        hpScale: 0.85 + worldId * 0.25,
+        hpScale: 0.78 + worldId * 0.16,
         bossWorldId: worldId,
       });
     }
@@ -979,7 +988,7 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
     waves.push({
       waveNumber: w,
       groups,
-      bonusGold: 45 + w * 12 + worldId * 6,
+      bonusGold: 50 + w * 14 + worldId * 8,
       isBossWave: isBoss && w === totalWaves,
     });
   }
@@ -1029,7 +1038,7 @@ export const MISSIONS_DATA: MissionDefinition[] = (() => {
       focusCategories: spec.focusCategories,
       requiredTypedChars: spec.requiredTypedChars,
       targetAccuracy: spec.targetAccuracy,
-      startingGold: 240 + spec.worldId * 25 + (spec.missionIndex === 6 ? 60 : 0),
+      startingGold: 245 + spec.worldId * 30 + (spec.missionIndex === 6 ? 70 : 0),
       startingLives: 20,
       waves: buildWavesForMission(spec.worldId, spec.missionIndex, globalIndex),
       isBossMission: spec.missionIndex === 6,

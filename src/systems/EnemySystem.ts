@@ -28,6 +28,10 @@ export class EnemySystem {
 
     const maxHp = Math.max(10, Math.round(def.baseHp * hpScale));
     const maxShield = Math.round(def.baseShield * hpScale);
+    const goldReward = Math.max(
+      def.goldReward,
+      Math.round(def.goldReward * (1 + Math.max(0, hpScale - 1) * 0.35))
+    );
 
     return {
       id,
@@ -41,7 +45,7 @@ export class EnemySystem {
       speed: def.speed,
       baseSpeed: def.speed,
       armor: def.armor,
-      goldReward: def.goldReward,
+      goldReward,
       baseDamage: def.baseDamage,
       radius: def.radius,
       color,
