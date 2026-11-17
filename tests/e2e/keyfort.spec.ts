@@ -76,6 +76,30 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await expect(page.getByTestId('results-title')).toContainText('ZWYCIĘSTWO');
   });
 
+  test('does not launch a locked campaign mission or count browser shortcuts as typing', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => window.__keyfortApp!.startMission('w1_m6'));
+    await expect(page.getByTestId('main-menu-screen')).toBeVisible();
+    await page.getByTestId('quick-start-campaign-btn').click();
+    const attempts = () => page.evaluate(() => window.__keyfortApp!.getActiveSession()!.typingEngine.getTotalAttempts());
+    const before = await attempts();
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', {key: 'a', ctrlKey: true})));
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', {key: 'f', isComposing: true})));
+    expect(await attempts()).toBe(before);
+  });
+
+  test('renders a profile name as text and preserves it in exported JSON', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('nav-profiles').click();
+    const name = '<img id="injected-profile" src="x"> & "name"';
+    await page.getByTestId('new-profile-name-input').fill(name);
+    await page.getByTestId('create-profile-btn').click();
+    await expect(page.getByTestId('active-profile-name')).toHaveText(name);
+    await expect(page.locator('#injected-profile')).toHaveCount(0);
+    const save = JSON.parse(await page.getByTestId('save-json-textarea').inputValue());
+    expect(save.profiles[save.activeProfileId].name).toBe(name);
+  });
+
   test('handles losing a mission when base HP reaches 0', async ({ page }) => {
     await page.goto('/');
     await page.getByTestId('quick-start-campaign-btn').click();

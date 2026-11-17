@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import './styles/main.css';
 import { AppController } from './ui/AppController';
 

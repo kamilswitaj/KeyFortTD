@@ -9,17 +9,17 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL: 'http://localhost:4173',
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     viewport: { width: 1440, height: 900 },
   },
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], channel: 'chrome' },
+      use: { ...devices['Desktop Chrome'],  },
     },
   ],
   webServer: {
-    command: 'npm.cmd run preview -- --port 4173',
+    command: 'npm run dev -- --port 4173 --strictPort',
     url: 'http://localhost:4173',
     reuseExistingServer: !process.env.CI,
     timeout: 60000,

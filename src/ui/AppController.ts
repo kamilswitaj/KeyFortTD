@@ -176,8 +176,13 @@ export class AppController {
     const profile = this.persistence.getActiveProfile();
     const typing = session.typingEngine;
 
+    if (session.mode === 'sandbox') {
+      this.renderSessionEndModal();
+      return;
+    }
+
     // Update lifetime typing stats
-    profile.totalPracticeTimeSec += Math.max(5, typing.getActiveDurationSec());
+    profile.totalPracticeTimeSec += typing.getActiveDurationSec();
     profile.bestCombo = Math.max(profile.bestCombo, typing.getMaxCombo());
     profile.bestWpm = Math.max(profile.bestWpm, typing.getWpm());
 
@@ -187,11 +192,12 @@ export class AppController {
       mode: session.mode,
       wpm: typing.getWpm(),
       accuracy: typing.getAccuracy(),
-      durationSec: Math.max(5, typing.getActiveDurationSec()),
+      durationSec: typing.getActiveDurationSec(),
       charsTyped: typing.getTotalCorrect(),
       errors: typing.getTotalErrors(),
       maxCombo: typing.getMaxCombo(),
     });
+    profile.sessionHistory = profile.sessionHistory.slice(-60);
 
     if (session.mode === 'campaign') {
       this.lastOutcome = ProgressionEngine.evaluateMissionResult(
@@ -206,6 +212,8 @@ export class AppController {
       );
       if (this.lastOutcome.victory) {
         this.audio.playVictory();
+      } else {
+        ProgressionEngine.awardXp(profile, this.lastOutcome.xpEarned);
       }
       this.newlyUnlockedAchievements = AchievementSystem.evaluateAndUnlock(profile, {
         missionWon: this.lastOutcome.victory,
@@ -254,12 +262,12 @@ export class AppController {
       const res = this.activeSession.handleKeyInput(e.key, Date.now(), e.repeat);
       if (!res.ignored) {
         const profile = this.persistence.getActiveProfile();
-        profile.totalCharsTyped += 1;
-        if (res.isCorrect) {
-          profile.totalCorrectChars += 1;
+        if (this.activeSession.mode !== 'sandbox') {
+          profile.totalCharsTyped += 1;
+          if (res.isCorrect) profile.totalCorrectChars += 1;
+          profile.bestCombo = Math.max(profile.bestCombo, res.maxCombo);
+          profile.bestWpm = Math.max(profile.bestWpm, this.activeSession.typingEngine.getWpm());
         }
-        profile.bestCombo = Math.max(profile.bestCombo, res.maxCombo);
-        profile.bestWpm = Math.max(profile.bestWpm, this.activeSession.typingEngine.getWpm());
 
         this.audio.playKeystroke(res.isCorrect, res.combo);
         if (res.sequenceCompleted) {
@@ -1540,9 +1548,11 @@ export class AppController {
         const branch = (e.currentTarget as HTMLElement).getAttribute('data-upgrade-branch') as UpgradeBranch;
         const selectedTower = this.activeSession?.getSelectedTower();
         if (selectedTower && this.activeSession?.upgradeTower(selectedTower.id, branch)) {
-          AchievementSystem.evaluateAndUnlock(this.persistence.getActiveProfile(), {
-            activeTowers: this.activeSession.getTowers(),
-          });
+          if (this.activeSession.mode !== 'sandbox') {
+            AchievementSystem.evaluateAndUnlock(this.persistence.getActiveProfile(), {
+              activeTowers: this.activeSession.getTowers(),
+            });
+          }
           this.persistence.saveToStorage();
           this.updateSidebarInPlace();
           this.updateGameplayHudInPlace();

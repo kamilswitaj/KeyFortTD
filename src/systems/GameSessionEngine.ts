@@ -62,7 +62,7 @@ export class GameSessionEngine {
   constructor(config: GameSessionConfig) {
     this.mode = config.mode;
     this.mission = config.mission;
-    this.profile = config.profile;
+    this.profile = config.mode === 'sandbox' ? structuredClone(config.profile) : config.profile;
     this.map = MAPS_DATA[config.mission.mapId] ?? MAPS_DATA.green_valley_1;
     this.path = new PathSystem(this.map.waypoints);
 
