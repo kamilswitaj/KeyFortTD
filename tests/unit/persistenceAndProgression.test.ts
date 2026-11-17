@@ -49,9 +49,73 @@ describe('PersistenceService, Migration, ProgressionEngine, and AchievementSyste
     const freshService = new PersistenceService();
     expect(freshService.getAllProfiles().length).toBe(1);
 
-    const impRes = freshService.importSaveJson(exported);
+    const impRes = service.importSaveJson(exported);
     expect(impRes.success).toBe(true);
-    expect(freshService.getAllProfiles().length).toBe(2);
+    expect(service.getAllProfiles().length).toBe(2);
+  });
+
+  it('rejects malformed, out-of-range, or malicious imports without overwriting valid saves', () => {
+    const service = new PersistenceService();
+    const active = service.getActiveProfile();
+    active.name = 'BezpiecznyGracz';
+    active.level = 7;
+    service.saveToStorage();
+
+    const invalidPayloads = [
+      JSON.stringify({ version: 99, activeProfileId: 'p1', profiles: {} }),
+      JSON.stringify({ version: 2, activeProfileId: 'missing', profiles: {} }),
+      JSON.stringify({
+        version: 2,
+        activeProfileId: '<script>alert(1)</script>',
+        profiles: { '<script>alert(1)</script>': { name: 'BadId' } },
+      }),
+      JSON.stringify({
+        version: 2,
+        activeProfileId: 'p1',
+        profiles: { p1: { id: 'p1', name: 'Test', level: -5 } },
+      }),
+      JSON.stringify({
+        version: 2,
+        activeProfileId: 'p1',
+        profiles: { p1: { id: 'p1', name: 'Test', unlockedTowers: ['laser_shark'] } },
+      }),
+      JSON.stringify({
+        version: 2,
+        activeProfileId: 'p1',
+        profiles: { p1: { id: 'p1', name: 'Test', settings: { language: 'de' } } },
+      }),
+      JSON.stringify({
+        version: 2,
+        activeProfileId: 'p1',
+        profiles: {
+          p1: {
+            id: 'p1',
+            name: 'Test',
+            characterMastery: { f: { char: 'f', attempts: 10, correct: 5, errors: 5, status: 'godlike' } },
+          },
+        },
+      }),
+    ];
+
+    for (const payload of invalidPayloads) {
+      const res = service.importSaveJson(payload);
+      expect(res.success).toBe(false);
+      // Verify existing save was never overwritten
+      expect(service.getActiveProfile().name).toBe('BezpiecznyGracz');
+      expect(service.getActiveProfile().level).toBe(7);
+    }
+  });
+
+  it('throttles frequent save requests and flushes immediately on demand', () => {
+    const service = new PersistenceService();
+    const profile = service.getActiveProfile();
+    profile.bestCombo = 42;
+    service.requestThrottledSave(5000);
+
+    // Before flush, force immediate flushSave and verify storage
+    service.flushSave();
+    const reloaded = new PersistenceService();
+    expect(reloaded.getActiveProfile().bestCombo).toBe(42);
   });
 
   it('prevents completing an educational mission without sufficient typing practice', () => {
