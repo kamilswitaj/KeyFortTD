@@ -1,5 +1,6 @@
 import { FINGER_META, lookupCharKey, POLISH_QWERTY_KEYS } from '../data/keyboardData';
 import { CharacterStats, Language } from '../types';
+import { escapeHtml } from '../utils/escapeHtml';
 
 export interface VirtualKeyboardRenderProps {
   expectedChar: string | null;
@@ -64,7 +65,7 @@ export class VirtualKeyboardView {
               k.code === 'KeyF' || k.code === 'KeyJ' ? '<span class="vk-bump"></span>' : '';
 
             return `<div class="${classes.join(' ')}" data-code="${k.code}" style="width:${widthEm.toFixed(2)}rem; ${bgStyle}">
-              <span class="vk-main">${mainLabel}</span>
+              <span class="vk-main">${escapeHtml(mainLabel)}</span>
               ${altLabel}
               ${bumpHtml}
             </div>`;
@@ -107,7 +108,7 @@ export class VirtualKeyboardView {
         <div class="vk-hint-bar">
           <div class="vk-hint-pill" style="border-color:${fMeta.color}">
             <span class="vk-dot" style="background:${fMeta.color}"></span>
-            <strong>${displayChar}</strong> → ${fingerLabel} ${modText}
+            <strong>${escapeHtml(displayChar)}</strong> → ${fingerLabel} ${modText}
           </div>
           <span class="vk-ergo-disclaimer">
             ${

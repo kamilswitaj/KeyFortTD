@@ -13,7 +13,7 @@ function bootstrap(): void {
     throw new Error('Missing #app root element');
   }
   const controller = new AppController(appRoot);
-  window.__keyfortApp = controller;
+  if (import.meta.env.DEV) window.__keyfortApp = controller;
 }
 
 if (document.readyState === 'loading') {

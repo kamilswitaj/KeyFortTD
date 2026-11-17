@@ -25,6 +25,7 @@ import {
   UpgradeBranch,
 } from '../types';
 import { VirtualKeyboardView } from './VirtualKeyboardView';
+import { escapeHtml } from '../utils/escapeHtml';
 
 export class AppController {
   private container: HTMLElement;
@@ -72,12 +73,13 @@ export class AppController {
     mode: GameMode = 'campaign',
     options: { unlimitedGold?: boolean; unlimitedEnergy?: boolean; customAllowedKeys?: string[] } = {}
   ): void {
-    this.stopGameLoop();
     const profile = this.persistence.getActiveProfile();
     let mission = getMissionById(missionId) ?? MISSIONS_DATA[0];
+    if (mode === 'campaign' && (!getMissionById(missionId) || !ProgressionEngine.isMissionUnlocked(mission, profile))) return;
+    this.stopGameLoop();
 
     if (mode === 'survival') {
-      const unlockedKeysSet = new Set<string>(['f', 'j', ' ', 'd', 'k']);
+      const unlockedKeysSet = new Set<string>(MISSIONS_DATA[0].allowedKeys);
       for (const m of MISSIONS_DATA) {
         if (profile.completedMissions[m.id]?.completed) {
           m.allowedKeys.forEach((k) => unlockedKeysSet.add(k));
@@ -89,6 +91,7 @@ export class AppController {
         namePl: 'Tryb Przetrwania',
         nameEn: 'Survival Mode',
         allowedKeys: Array.from(unlockedKeysSet),
+        newKeys: [],
         requiredTypedChars: 0,
         startingGold: 320,
         startingLives: 25,
@@ -101,6 +104,7 @@ export class AppController {
         namePl: 'Poligon Taktyczny (Sandbox)',
         nameEn: 'Tactical Sandbox',
         allowedKeys: options.customAllowedKeys ?? mission.allowedKeys,
+        newKeys: mission.newKeys.filter((key) => (options.customAllowedKeys ?? mission.allowedKeys).includes(key)),
         requiredTypedChars: 0,
         startingGold: 1500,
         startingLives: 99,
@@ -235,17 +239,17 @@ export class AppController {
         return;
       }
 
-      if (e.ctrlKey && !e.altKey && (e.key === 'r' || e.key === 'R' || e.key === 'l' || e.key === 'i')) {
+      if (e.isComposing || e.metaKey || (e.ctrlKey && !e.getModifierState('AltGraph') && !e.altKey) ||
+          (e.altKey && !e.getModifierState('AltGraph') && !e.ctrlKey) || target?.isContentEditable) {
         return;
-      }
-
-      if (e.key === ' ' || e.key === '/' || e.key === "'") {
-        e.preventDefault();
       }
 
       if (this.activeSession.isSessionOver() || this.activeSession.getIsPaused()) {
         return;
       }
+
+      // Suppress native button activation/page scrolling only during active typing.
+      if (e.key === ' ' || e.key === '/' || e.key === "'") e.preventDefault();
 
       const res = this.activeSession.handleKeyInput(e.key, Date.now(), e.repeat);
       if (!res.ignored) {
@@ -329,8 +333,8 @@ export class AppController {
 
         <div style="display:flex; align-items:center; gap:0.5rem;">
           <div class="profile-pill" data-nav="profiles" data-testid="nav-profiles">
-            <span>${profile.avatarIcon}</span>
-            <strong data-testid="active-profile-name">${profile.name}</strong>
+            <span>${escapeHtml(profile.avatarIcon)}</span>
+            <strong data-testid="active-profile-name">${escapeHtml(profile.name)}</strong>
             <span style="color:#38bdf8;">Poz./Lv ${profile.level} (${profile.xp}/${xpReq} XP)</span>
           </div>
           <button class="lang-toggle-btn" data-action="toggle-lang" data-testid="lang-toggle-btn">
@@ -389,7 +393,7 @@ export class AppController {
           </div>
           <div style="background:rgba(15,23,42,0.85); border:1px solid rgba(56,189,248,0.35); border-radius:12px; padding:1rem 1.35rem; min-width:250px;">
             <div style="font-size:0.8rem; color:#94a3b8;">${this.i18n.pick('Status Obrońcy', 'Defender Status')}</div>
-            <div style="font-size:1.25rem; font-weight:800; margin:0.25rem 0;">${profile.avatarIcon} ${profile.name}</div>
+            <div style="font-size:1.25rem; font-weight:800; margin:0.25rem 0;">${escapeHtml(profile.avatarIcon)} ${escapeHtml(profile.name)}</div>
             <div style="font-size:0.85rem; color:#38bdf8;">
               ${this.i18n.pick('Ukończone misje:', 'Completed missions:')} <strong>${completedCount} / 48</strong>
             </div>
@@ -726,8 +730,8 @@ export class AppController {
           </div>
         </div>
 
-        <div class="console-sequence-box ${sizeClass}" data-testid="console-sequence-box" data-expected-char="${expected}">
-          <span class="char-done" data-testid="console-entered">${entered}</span><span class="char-current ${wrongKey ? 'char-error' : ''}" data-testid="console-expected">${displayExpected}${wrongKey ? '!' : ''}</span><span class="char-pending" data-testid="console-remaining">${remaining}</span>
+        <div class="console-sequence-box ${sizeClass}" data-testid="console-sequence-box" data-expected-char="${escapeHtml(expected)}">
+          <span class="char-done" data-testid="console-entered">${escapeHtml(entered)}</span><span class="char-current ${wrongKey ? 'char-error' : ''}" data-testid="console-expected">${escapeHtml(displayExpected)}${wrongKey ? '!' : ''}</span><span class="char-pending" data-testid="console-remaining">${escapeHtml(remaining)}</span>
         </div>
 
         ${vkHtml}
@@ -1011,9 +1015,9 @@ export class AppController {
             const statusIcon =
               status === 'mastered' ? '★' : status === 'practicing' ? '◐' : status === 'learning' ? '◔' : '·';
             return `
-              <div class="heatmap-key ${status}" title="${k.baseChar.toUpperCase()}: ${score}% (${status})">
+              <div class="heatmap-key ${escapeHtml(status)}" title="${k.baseChar.toUpperCase()}: ${escapeHtml(score)}% (${escapeHtml(status)})">
                 <span>${k.baseChar.toUpperCase()}</span>
-                <span style="font-size:0.62rem;">${statusIcon} ${score}%</span>
+                <span style="font-size:0.62rem;">${statusIcon} ${escapeHtml(score)}%</span>
               </div>
             `;
           })
@@ -1028,9 +1032,9 @@ export class AppController {
         const status = stat?.status ?? 'locked';
         const score = stat?.masteryScore ?? 0;
         return `
-          <div class="heatmap-key ${status}" title="${ch}: ${score}% (${status})">
+          <div class="heatmap-key ${escapeHtml(status)}" title="${ch}: ${escapeHtml(score)}% (${escapeHtml(status)})">
             <span>${ch}</span>
-            <span style="font-size:0.62rem;">${score}%</span>
+            <span style="font-size:0.62rem;">${escapeHtml(score)}%</span>
           </div>
         `;
       })
@@ -1045,8 +1049,8 @@ export class AppController {
           <p style="color:#94a3b8; font-size:0.88rem;">
             <strong>👨‍👩‍👦 ${this.i18n.t('stats.parentOverview')}:</strong>
             ${this.i18n.pick(
-              `Gracz ${profile.name} ukończył ${completedMissionsCount}/48 misji edukacyjnych, ćwiczył łącznie przez ok. ${practiceMinutes} min i wpisał poprawnie ${profile.totalCorrectChars} znaków ze średnią celnością ${overallAcc}%.`,
-              `Player ${profile.name} has completed ${completedMissionsCount}/48 educational missions, practiced for ${practiceMinutes} min, and typed ${profile.totalCorrectChars} correct characters with ${overallAcc}% accuracy.`
+              `Gracz ${escapeHtml(profile.name)} ukończył ${completedMissionsCount}/48 misji edukacyjnych, ćwiczył łącznie przez ok. ${practiceMinutes} min i wpisał poprawnie ${profile.totalCorrectChars} znaków ze średnią celnością ${overallAcc}%.`,
+              `Player ${escapeHtml(profile.name)} has completed ${completedMissionsCount}/48 educational missions, practiced for ${practiceMinutes} min, and typed ${profile.totalCorrectChars} correct characters with ${overallAcc}% accuracy.`
             )}
           </p>
         </div>
@@ -1087,7 +1091,7 @@ export class AppController {
                       .slice(0, 10)
                       .map(
                         (s) =>
-                          `<span class="key-chip" style="border-color:#facc15;">${s.char} (${Math.round((s.correct / s.attempts) * 100)}%, ${s.avgReactionMs}ms)</span>`
+                          `<span class="key-chip" style="border-color:#facc15;">${escapeHtml(s.char)} (${Math.round((s.correct / s.attempts) * 100)}%, ${escapeHtml(s.avgReactionMs)}ms)</span>`
                       )
                       .join('')}
                   </div>`
@@ -1104,8 +1108,8 @@ export class AppController {
                       .map(
                         (h) =>
                           `<div style="display:flex; justify-content:space-between; background:#090d16; padding:0.4rem 0.65rem; border-radius:6px;">
-                            <span><strong>${h.missionId}</strong> (${h.mode})</span>
-                            <span>🎯 ${Math.round(h.accuracy * 100)}% | ⚡ ${h.wpm} WPM | 🔥 ${h.maxCombo}</span>
+                            <span><strong>${escapeHtml(h.missionId)}</strong> (${escapeHtml(h.mode)})</span>
+                            <span>🎯 ${Math.round(h.accuracy * 100)}% | ⚡ ${escapeHtml(h.wpm)} WPM | 🔥 ${escapeHtml(h.maxCombo)}</span>
                           </div>`
                       )
                       .join('')}
@@ -1184,9 +1188,9 @@ export class AppController {
               const isCurrent = p.id === active.id;
               const completed = Object.values(p.completedMissions).filter((m) => m.completed).length;
               return `
-                <div style="display:flex; justify-content:space-between; align-items:center; background:#090d16; border:1px solid ${isCurrent ? '#38bdf8' : 'rgba(148,163,184,0.2)'}; padding:0.75rem 1rem; border-radius:10px;" data-testid="profile-row-${p.id}">
+                <div style="display:flex; justify-content:space-between; align-items:center; background:#090d16; border:1px solid ${isCurrent ? '#38bdf8' : 'rgba(148,163,184,0.2)'}; padding:0.75rem 1rem; border-radius:10px;" data-testid="profile-row-${escapeHtml(p.id)}">
                   <div>
-                    <strong style="font-size:1.05rem;">${p.avatarIcon} ${p.name}</strong>
+                    <strong style="font-size:1.05rem;">${escapeHtml(p.avatarIcon)} ${escapeHtml(p.name)}</strong>
                     ${isCurrent ? `<span style="color:#4ade80; font-size:0.78rem; margin-left:0.5rem;">(Aktywny / Active)</span>` : ''}
                     <div style="font-size:0.78rem; color:#94a3b8;">
                       Poz./Lv ${p.level} | Misje: ${completed}/48
@@ -1195,7 +1199,7 @@ export class AppController {
                   <div style="display:flex; gap:0.4rem;">
                     ${
                       !isCurrent
-                        ? `<button class="primary-cta-btn" style="padding:0.35rem 0.85rem; font-size:0.8rem;" data-switch-profile="${p.id}" data-testid="switch-profile-${p.id}">
+                        ? `<button class="primary-cta-btn" style="padding:0.35rem 0.85rem; font-size:0.8rem;" data-switch-profile="${escapeHtml(p.id)}" data-testid="switch-profile-${escapeHtml(p.id)}">
                             ${this.i18n.pick('Przełącz', 'Switch')}
                           </button>`
                         : ''
@@ -1227,7 +1231,7 @@ export class AppController {
             data-testid="save-json-textarea"
             rows="5"
             style="width:100%; background:#050811; border:1px solid rgba(148,163,184,0.3); border-radius:8px; padding:0.6rem; font-family:monospace; font-size:0.75rem;"
-          >${this.persistence.exportSaveJson()}</textarea>
+          >${escapeHtml(this.persistence.exportSaveJson())}</textarea>
           <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
             <button class="nav-btn" data-action="import-save-json" data-testid="import-save-btn">
               📥 ${this.i18n.t('profile.import')}
@@ -1236,7 +1240,7 @@ export class AppController {
               🗑️ ${this.i18n.t('profile.reset')}
             </button>
           </div>
-          ${this.importStatusMessage ? `<div data-testid="import-status-msg" style="color:#4ade80; font-size:0.82rem;">${this.importStatusMessage}</div>` : ''}
+          ${this.importStatusMessage ? `<div data-testid="import-status-msg" style="color:#4ade80; font-size:0.82rem;">${escapeHtml(this.importStatusMessage)}</div>` : ''}
         </div>
       </section>
     `;
@@ -1304,7 +1308,7 @@ export class AppController {
 
     const session = this.activeSession;
     const typing = session.typingEngine;
-    const isVictory = session.isVictory();
+    const isVictory = this.lastOutcome?.victory ?? session.isVictory();
     const stars = this.lastOutcome?.stars ?? (isVictory ? 3 : 0);
     const nextMission = MISSIONS_DATA.find((m) => m.globalIndex === session.mission.globalIndex + 1);
 

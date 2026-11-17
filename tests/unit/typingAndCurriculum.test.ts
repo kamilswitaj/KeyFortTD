@@ -64,6 +64,13 @@ describe('Curriculum, Polish Keyboard, TypingEngine, and AdaptiveLearningEngine'
     }
   });
 
+  it('does not introduce out-of-scope new keys in custom or survival exercises', () => {
+    const mission = { ...MISSIONS_DATA[47], allowedKeys: ['f', 'j'], newKeys: ['x', 'z'] };
+    const batch = AdaptiveLearningEngine.generateExerciseBatch(mission, {}, 'pl', 30, 'restricted');
+    expect(batch).toHaveLength(30);
+    expect(batch.every((item) => /^[fj]+$/.test(item.text))).toBe(true);
+  });
+
   it('clearly distinguishes intentional drills from real words', () => {
     const masteryMap: Record<string, CharacterStats> = {};
     const m1 = MISSIONS_DATA[0]; // F and J only -> drills

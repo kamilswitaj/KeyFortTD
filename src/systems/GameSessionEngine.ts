@@ -259,7 +259,7 @@ export class GameSessionEngine {
   }
 
   public startNextWave(): boolean {
-    if (this.sessionOver || this.waveSystem.isWaveActive()) return false;
+    if (this.sessionOver || this.waveSystem.isWaveActive() || !this.waveSystem.hasMoreWaves()) return false;
     const waveDef = this.waveSystem.startNextWave();
     if (!waveDef) return false;
     if (waveDef.isBossWave) {

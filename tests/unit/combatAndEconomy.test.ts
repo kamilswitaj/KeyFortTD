@@ -23,6 +23,14 @@ describe('ResourceEconomy, TowerSystem, EnemySystem, and CombatSystem', () => {
     expect(economy.getEfficiencyMultiplier(0)).toBeCloseTo(1.4, 2);
   });
 
+  it('does not spend energy when a purchase cannot be afforded', () => {
+    const economy = new ResourceEconomy(300, 30);
+    expect(economy.consumeEnergy(35)).toBe(false);
+    expect(economy.getEnergy()).toBe(30);
+    expect(economy.consumeEnergy(25)).toBe(true);
+    expect(economy.getEnergy()).toBe(5);
+  });
+
   it('selects targets accurately according to First, Last, Strongest, and Nearest priorities', () => {
     const pad = MAPS_DATA.green_valley_1.pads[0];
     const tower = TowerSystem.createTower('sniper', pad, '1');

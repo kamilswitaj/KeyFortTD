@@ -115,10 +115,12 @@ export class AdaptiveLearningEngine {
   ): TypingPromptItem[] {
     const rng = new SeededRandom(seed);
     const allowedSet = new Set(mission.allowedKeys);
+    const newKeys = mission.newKeys.filter((key) => allowedSet.has(key));
+    if (!mission.allowedKeys.some((key) => key !== ' ')) return [];
     const hasSpace = allowedSet.has(' ');
     const weights = AdaptiveLearningEngine.computeCharacterWeights(
       mission.allowedKeys,
-      mission.newKeys,
+      newKeys,
       masteryMap,
       now
     );
@@ -137,7 +139,7 @@ export class AdaptiveLearningEngine {
 
     for (let i = 0; i < count; i++) {
       // First 2 items of a mission with newKeys are always introductory drills on the new keys
-      const forceIntroDrill = i < 2 && mission.newKeys.filter((k) => k !== ' ').length > 0;
+      const forceIntroDrill = i < 2 && newKeys.some((k) => k !== ' ');
       const category: ExerciseCategory = forceIntroDrill
         ? 'drill'
         : mission.focusCategories[i % mission.focusCategories.length] ?? 'drill';
@@ -145,7 +147,7 @@ export class AdaptiveLearningEngine {
       const prompt = AdaptiveLearningEngine.buildSinglePrompt(
         i,
         category,
-        mission.newKeys,
+        newKeys,
         mission.allowedKeys,
         allowedSet,
         hasSpace,
@@ -181,7 +183,7 @@ export class AdaptiveLearningEngine {
     const nonSpaceAllowed = allowedKeys.filter((k) => k !== ' ');
 
     if (category === 'sentences' && hasSpace && (allowedSentences.length > 0 || allowedWords.length >= 3)) {
-      if (allowedSentences.length > 0 && rng.next() < 0.65) {
+      if (allowedSentences.length > 0 && (allowedWords.length < 3 || rng.next() < 0.65)) {
         const sentence = AdaptiveLearningEngine.pickWeightedCandidate(allowedSentences, weights, rng);
         return {
           id: `prompt_${index}_sentence`,

@@ -123,7 +123,16 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
 
     // Launch Boss Mission w1_m6 and defeat the Boss
     await page.evaluate(() => {
-      window.__keyfortApp!.startMission('w1_m6', 'campaign', { unlimitedGold: true });
+      const app = window.__keyfortApp!;
+      const profile = app.persistence.getActiveProfile();
+      // Seed prerequisite completions explicitly: campaign launch must enforce unlocks.
+      for (let i = 1; i <= 5; i++) {
+        const missionId = `w1_m${i}`;
+        profile.completedMissions[missionId] = {
+          missionId, completed: true, stars: 3, bestAccuracy: 1, bestWpm: 25, bestScore: 1000, timesCompleted: 1,
+        };
+      }
+      app.startMission('w1_m6', 'campaign', { unlimitedGold: true });
     });
     await expect(page.getByTestId('gameplay-screen')).toBeVisible();
 

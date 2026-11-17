@@ -57,7 +57,6 @@ export class ResourceEconomy {
       this.energy = Math.max(0, this.energy - amount);
       return true;
     }
-    this.energy = 0;
     return false;
   }
 
