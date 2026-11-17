@@ -61,7 +61,7 @@ export interface DailySeriesPoint {
   practiceTimeSec: number;
   correctChars: number;
   missionsCompletedCumulative: number;
-  masteredCount: number;
+  masteredCount: number | null;
 }
 
 export interface MissionLeaderboardEntry {
@@ -138,7 +138,7 @@ export class StatisticsEngine {
         : null;
 
     for (const s of profile.sessionHistory) {
-      if (s.mode === 'sandbox') continue;
+      if (s.mode === 'sandbox' || s.unrestrictedResources) continue;
       const qWpm =
         s.qualifyingWpm !== undefined
           ? s.qualifyingWpm
@@ -146,16 +146,6 @@ export class StatisticsEngine {
       if (qWpm !== null && (best === null || qWpm > best)) {
         best = qWpm;
       }
-    }
-
-    // Legacy v2 fallback if completed missions exist with >= 20 totalCorrectChars
-    if (
-      best === null &&
-      profile.totalCorrectChars >= MIN_QUALIFYING_CHARS_FOR_WPM &&
-      profile.bestWpm > 0 &&
-      profile.sessionHistory.length === 0
-    ) {
-      best = profile.bestWpm;
     }
 
     return best;
@@ -249,7 +239,7 @@ export class StatisticsEngine {
     if ((entry.status === 'victory' || entry.status === 'completed') && entry.mode === 'campaign') {
       existing.missionsCompleted += 1;
     }
-    existing.masteredCountSnapshot = Math.max(existing.masteredCountSnapshot, masteredNow);
+    existing.masteredCountSnapshot = masteredNow;
 
     profile.dailyStats[dateKey] = existing;
 
@@ -283,17 +273,13 @@ export class StatisticsEngine {
         errorChars: 0,
         sessionsCount: 0,
         missionsCompleted: 0,
-        masteredCountSnapshot: masteredCount,
+        masteredCountSnapshot: null,
       };
       cur.practiceTimeSec += Math.max(0, Math.round(s.durationSec));
       cur.correctChars += Math.max(0, s.charsTyped);
       cur.errorChars += Math.max(0, s.errors);
       cur.sessionsCount += 1;
-      if (
-        s.status === 'victory' ||
-        s.status === 'completed' ||
-        (s.status === undefined && s.mode === 'campaign')
-      ) {
+      if (s.mode === 'campaign' && (s.status === 'victory' || s.status === 'completed')) {
         cur.missionsCompleted += 1;
       }
       map[dateKey] = cur;
@@ -442,9 +428,7 @@ export class StatisticsEngine {
         : 0;
     const cutoffKey = cutoffMs > 0 ? StatisticsEngine.formatDateKey(cutoffMs) : '0000-00-00';
 
-    const dates = Object.keys(dailyMap)
-      .filter((d) => d >= cutoffKey)
-      .sort();
+    const dates = Object.keys(dailyMap).sort();
 
     let cumulativeMissions = 0;
     return dates.map((date) => {
@@ -461,7 +445,7 @@ export class StatisticsEngine {
         missionsCompletedCumulative: cumulativeMissions,
         masteredCount: item.masteredCountSnapshot,
       };
-    });
+    }).filter((point) => point.date >= cutoffKey);
   }
 
   /**
@@ -494,21 +478,6 @@ export class StatisticsEngine {
             timesCompleted: diffRec.timesCompleted,
             isFamilyRecord: false,
           });
-        } else if (!mRec.byDifficulty && difficultyFilter === (p.settings.difficulty ?? 'standard')) {
-          // Legacy v2 mission completion migrated under profile's default difficulty
-          entries.push({
-            profileId: p.id,
-            playerName: p.name,
-            avatarIcon: p.avatarIcon,
-            difficulty: difficultyFilter,
-            bestScore: mRec.bestScore,
-            bestAccuracy: mRec.bestAccuracy,
-            bestQualifyingWpm: mRec.bestQualifyingWpm ?? (mRec.bestWpm > 0 ? mRec.bestWpm : null),
-            stars: mRec.stars,
-            maxCombo: mRec.maxCombo ?? 0,
-            timesCompleted: mRec.timesCompleted,
-            isFamilyRecord: false,
-          });
         }
       } else {
         // 'all' difficulties: pick the player's highest-scoring difficulty record or overall record
@@ -528,20 +497,6 @@ export class StatisticsEngine {
             timesCompleted: mRec.timesCompleted,
             isFamilyRecord: false,
           });
-        } else {
-          entries.push({
-            profileId: p.id,
-            playerName: p.name,
-            avatarIcon: p.avatarIcon,
-            difficulty: p.settings.difficulty ?? 'standard',
-            bestScore: mRec.bestScore,
-            bestAccuracy: mRec.bestAccuracy,
-            bestQualifyingWpm: mRec.bestQualifyingWpm ?? (mRec.bestWpm > 0 ? mRec.bestWpm : null),
-            stars: mRec.stars,
-            maxCombo: mRec.maxCombo ?? 0,
-            timesCompleted: mRec.timesCompleted,
-            isFamilyRecord: false,
-          });
         }
       }
     }
@@ -551,7 +506,7 @@ export class StatisticsEngine {
       return b.bestAccuracy - a.bestAccuracy;
     });
 
-    if (entries.length > 0) {
+    if (entries.length > 0 && difficultyFilter !== 'all') {
       entries[0].isFamilyRecord = true;
     }
 

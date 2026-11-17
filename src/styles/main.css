@@ -1572,3 +1572,17 @@ body.in-gameplay {
   border-radius: 7px;
   border: 1px dashed rgba(148, 163, 184, 0.2);
 }
+
+/* Storage warnings must not change battlefield geometry. */
+.app-shell-gameplay #storage-warning-slot { position: fixed; z-index: 100; right: 12px; bottom: 12px; max-width: min(520px, 90vw); }
+#storage-warning-slot:empty { display: none; }
+/* Keep essential HUD cells visible on 1280px desktop even with longer numeric values. */
+@media (max-width: 1366px) {
+  .hud-top-row { gap: 3px; }
+  .hud-stat, .hud-mini-stat { padding-inline: 4px; min-width: 0; }
+  .hud-cell-energy { min-width: 158px; }
+  .energy-bar-outer { width: 30px; }
+  .gameplay-header { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .gameplay-header-left { min-width: 0; }
+  .gameplay-header-left .header-profile-select { max-width: 145px; }
+}

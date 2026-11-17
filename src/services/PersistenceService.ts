@@ -80,6 +80,22 @@ export class PersistenceService {
   private pendingFlush: boolean = false;
   private lastStorageError: string | null = null;
   private onExternalSyncCallback: (() => void) | null = null;
+  private lastPersistedJson: string | null = null;
+  private storageConflict = false;
+  private onStorageErrorCallback: (() => void) | null = null;
+
+  public setOnStorageError(cb: () => void): void { this.onStorageErrorCallback = cb; }
+
+  private reportStorageError(message: string): void {
+    if (this.lastStorageError === message) return;
+    this.lastStorageError = message;
+    this.onStorageErrorCallback?.();
+  }
+
+  private reportStorageConflict(): void {
+    this.storageConflict = true;
+    this.reportStorageError('Zapis zmieniono w innej karcie. Wyeksportuj lokalne dane, zamknij pozostałe karty i odśwież stronę. / Save changed in another tab. Export local data, close other tabs and reload.');
+  }
 
   constructor() {
     this.data = this.loadFromStorage();
@@ -95,7 +111,7 @@ export class PersistenceService {
   }
 
   public clearStorageError(): void {
-    this.lastStorageError = null;
+    if (!this.storageConflict) this.lastStorageError = null;
   }
 
   private bindLifecycleAndMultiTabSync(): void {
@@ -104,18 +120,10 @@ export class PersistenceService {
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
     window.addEventListener('storage', (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY && e.newValue) {
-        try {
-          const incoming = PersistenceService.parseAndValidateSaveData(JSON.parse(e.newValue), false);
-          const incomingTs = incoming.updatedAt ?? 0;
-          const localTs = this.data.updatedAt ?? 0;
-          if (incomingTs >= localTs) {
-            this.data = incoming;
-            this.onExternalSyncCallback?.();
-          }
-        } catch {
-          // Ignore malformed external storage event
-        }
+      if ((e.key === STORAGE_KEY || e.key === null) &&
+          (e.key === null || e.newValue !== this.lastPersistedJson)) {
+        // Never replace a live profile object or silently overwrite a newer save.
+        this.reportStorageConflict();
       }
     });
     if (typeof document !== 'undefined') {
@@ -407,8 +415,6 @@ export class PersistenceService {
             ? null
             : isFiniteNumber(mVal.bestQualifyingWpm)
             ? Math.round(clampFinite(mVal.bestQualifyingWpm, 0, 400, 0))
-            : bestWpm > 0
-            ? bestWpm
             : null;
         const bestScore = Math.round(clampFinite(mVal.bestScore, 0, 10000000, 0));
         const maxCombo = Math.floor(clampFinite(mVal.maxCombo, 0, 100000, 0));
@@ -441,20 +447,9 @@ export class PersistenceService {
               timesCompleted: Math.floor(clampFinite(dVal.timesCompleted, 0, 100000, 1)),
             };
           }
-        } else if (Boolean(mVal.completed)) {
-          // Migrate v2 completed mission record into profile's difficulty bucket
-          byDifficulty[settings.difficulty] = {
-            difficulty: settings.difficulty,
-            completed: true,
-            stars: starsRaw,
-            bestAccuracy,
-            bestWpm,
-            bestQualifyingWpm,
-            bestScore,
-            maxCombo,
-            timesCompleted,
-          };
         }
+        // Legacy results remain in the overall record: original difficulty and
+        // qualifying sample cannot be inferred from today's profile settings.
 
         completedMissions[mId] = {
           missionId: mId,
@@ -604,20 +599,20 @@ export class PersistenceService {
           ? (entry.status as SessionCompletionStatus)
           : entry.victory === false
           ? 'defeat'
-          : 'completed';
+          : entry.victory === true
+          ? 'completed'
+          : undefined;
 
         const charsTyped = Math.floor(clampFinite(entry.charsTyped, 0, 100000, 0));
         const durationSec = Math.round(clampFinite(entry.durationSec, 0, 86400, 0));
-        const qualifyingWpm =
-          entry.qualifyingWpm === null
-            ? null
-            : isFiniteNumber(entry.qualifyingWpm)
-            ? Math.round(clampFinite(entry.qualifyingWpm, 0, 300, 0))
-            : StatisticsEngine.computeQualifyingWpm(charsTyped, durationSec);
+        const qualifyingWpm = entry.unrestrictedResources === true || mode === 'sandbox'
+          ? null
+          : StatisticsEngine.computeQualifyingWpm(charsTyped, durationSec);
 
         sessionHistory.push({
           sessionId: typeof entry.sessionId === 'string' ? entry.sessionId.slice(0, 64) : undefined,
-          profileId: typeof entry.profileId === 'string' ? entry.profileId.slice(0, 80) : safeId,
+          profileId: safeId,
+          unrestrictedResources: typeof entry.unrestrictedResources === 'boolean' ? entry.unrestrictedResources : undefined,
           timestamp: Math.floor(clampFinite(entry.timestamp, 0, Number.MAX_SAFE_INTEGER, Date.now())),
           missionId: typeof entry.missionId === 'string' ? entry.missionId.slice(0, 40) : 'w1_m1',
           mode,
@@ -662,11 +657,14 @@ export class PersistenceService {
           errorChars: Math.floor(clampFinite(dVal.errorChars, 0, 10000000, 0)),
           sessionsCount: Math.floor(clampFinite(dVal.sessionsCount, 0, 100000, 0)),
           missionsCompleted: Math.floor(clampFinite(dVal.missionsCompleted, 0, 100000, 0)),
-          masteredCountSnapshot: Math.floor(clampFinite(dVal.masteredCountSnapshot, 0, 500, masteredCount)),
+          masteredCountSnapshot: isFiniteNumber(dVal.masteredCountSnapshot) ? Math.floor(clampFinite(dVal.masteredCountSnapshot, 0, 500, 0)) : null,
         };
       }
     } else if (sessionHistory.length > 0) {
       dailyStats = StatisticsEngine.reconstructDailyStatsFromHistory(sessionHistory, masteredCount);
+    }
+    for (const key of Object.keys(dailyStats).sort().slice(0, Math.max(0, Object.keys(dailyStats).length - 365))) {
+      delete dailyStats[key];
     }
 
     const totalCorrectChars = Math.floor(clampFinite(raw.totalCorrectChars, 0, 100000000, 0));
@@ -676,8 +674,6 @@ export class PersistenceService {
         ? null
         : isFiniteNumber(raw.bestQualifyingWpm)
         ? Math.floor(clampFinite(raw.bestQualifyingWpm, 0, 400, 0))
-        : totalCorrectChars >= 20 && bestWpm > 0
-        ? bestWpm
         : null;
 
     return {
@@ -786,6 +782,7 @@ export class PersistenceService {
         return PersistenceService.createDefaultSaveData();
       }
       const rawJson = localStorage.getItem(STORAGE_KEY);
+      this.lastPersistedJson = rawJson;
       if (!rawJson) {
         const fresh = PersistenceService.createDefaultSaveData();
         this.saveToStorage(fresh);
@@ -810,22 +807,31 @@ export class PersistenceService {
     }
     this.pendingFlush = false;
     const target = customData ?? this.data;
-    target.version = CURRENT_SAVE_VERSION;
-    target.updatedAt = Date.now();
-    this.data = target;
     try {
       if (typeof localStorage === 'undefined') {
-        this.lastStorageError = 'Pamięć przeglądarki (localStorage) jest niedostępna.';
+        this.reportStorageError('Pamięć przeglądarki (localStorage) jest niedostępna.');
         return false;
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(target));
+      if (this.storageConflict || localStorage.getItem(STORAGE_KEY) !== this.lastPersistedJson) {
+        this.reportStorageConflict();
+        return false;
+      }
+      const updatedAt = Date.now();
+      const json = JSON.stringify({ ...target, version: CURRENT_SAVE_VERSION, updatedAt });
+      localStorage.setItem(STORAGE_KEY, json);
+      target.version = CURRENT_SAVE_VERSION;
+      target.updatedAt = updatedAt;
+      this.data = target;
+      this.lastPersistedJson = json;
       this.lastStorageError = null;
+      this.onStorageErrorCallback?.();
       return true;
     } catch (e) {
-      this.lastStorageError =
+      this.reportStorageError(
         e instanceof Error
           ? `Błąd zapisu danych (${e.name}): ${e.message}`
-          : 'Przekroczono limit pamięci przeglądarki (localStorage).';
+          : 'Przekroczono limit pamięci przeglądarki (localStorage).'
+      );
       return false;
     }
   }
@@ -1007,8 +1013,9 @@ export class PersistenceService {
     try {
       const parsed = JSON.parse(jsonString);
       const validated = PersistenceService.parseAndValidateSaveData(parsed, true);
-      this.data = validated;
-      this.saveToStorage();
+      if (!this.saveToStorage(validated)) {
+        return { success: false, error: this.lastStorageError ?? 'Save failed' };
+      }
       return { success: true };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : 'Invalid JSON save data' };

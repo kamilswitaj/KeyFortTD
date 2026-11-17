@@ -161,7 +161,7 @@ export class FamilyDashboardView {
               return `
                 <tr data-testid="leaderboard-row-${escapeHtml(entry.profileId)}">
                   <td>
-                    ${entry.isFamilyRecord ? '👑 <strong>#1 Rekord Rodziny</strong>' : `#${idx + 1}`}
+                    ${entry.isFamilyRecord ? `👑 <strong>${i18n.pick('#1 Rekord rodziny', '#1 Family record')}</strong>` : state.leaderboardDifficulty === 'all' ? '—' : `#${idx + 1}`}
                   </td>
                   <td>
                     <span class="vk-dot" style="background:${pColor};"></span>
@@ -363,8 +363,8 @@ export class FamilyDashboardView {
       },
       {
         id: 'campaign_prog',
-        titlePl: 'Postęp kampanii (ukończone misje)',
-        titleEn: 'Campaign Progression (Missions)',
+        titlePl: 'Zaliczenia misji (z zachowanej historii)',
+        titleEn: 'Mission completions (retained history)',
         unit: '',
         getValue: (pt) => pt.missionsCompletedCumulative,
       },

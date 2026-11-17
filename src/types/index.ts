@@ -96,6 +96,7 @@ export type DifficultyLevel = 'relaxed' | 'standard' | 'tactical';
 export interface SessionHistoryEntry {
   sessionId?: string;
   profileId?: string;
+  unrestrictedResources?: boolean;
   timestamp: number;
   missionId: string;
   mode: GameMode;
@@ -122,7 +123,7 @@ export interface DailyPracticeAggregate {
   errorChars: number;
   sessionsCount: number;
   missionsCompleted: number;
-  masteredCountSnapshot: number;
+  masteredCountSnapshot: number | null;
 }
 
 export interface DifficultyMissionRecord {

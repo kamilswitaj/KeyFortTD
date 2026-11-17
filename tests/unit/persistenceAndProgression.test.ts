@@ -11,6 +11,38 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     localStorage.clear();
   });
 
+  it('blocks stale-tab writes without replacing live profile objects or falsely reporting successful imports', () => {
+    const a = new PersistenceService();
+    const b = new PersistenceService();
+    const originalB = b.getActiveProfile();
+    a.getActiveProfile().name = 'Newer progress';
+    expect(a.saveToStorage()).toBe(true);
+    const latest = localStorage.getItem('keyfort_td_save_data');
+    originalB.name = 'Stale progress';
+    expect(b.saveToStorage()).toBe(false);
+    expect(b.getLastStorageError()).toBeTruthy();
+    expect(b.getActiveProfile()).toBe(originalB);
+    expect(localStorage.getItem('keyfort_td_save_data')).toBe(latest);
+    expect(b.importSaveJson(a.exportSaveJson()).success).toBe(false);
+    expect(b.getActiveProfile()).toBe(originalB);
+  });
+
+  it('does not fabricate historical mastery or competitive legacy records', () => {
+    const raw = PersistenceService.createDefaultSaveData();
+    const p = raw.profiles[raw.activeProfileId];
+    p.bestWpm = 200;
+    p.totalCorrectChars = 50;
+    p.completedMissions.w1_m1 = {missionId: 'w1_m1', completed: true, stars: 3, bestAccuracy: 1, bestWpm: 200, bestScore: 999, timesCompleted: 1};
+    expect(StatisticsEngine.getBestQualifyingWpm(p)).toBeNull();
+    expect(StatisticsEngine.getMissionLeaderboard([p], 'w1_m1', 'all')).toEqual([]);
+    const daily = StatisticsEngine.reconstructDailyStatsFromHistory([
+      { timestamp: Date.now(), missionId: 'w1_m1', mode: 'survival', status: 'completed', charsTyped: 30, errors: 0, durationSec: 20, wpm: 18, accuracy: 1, maxCombo: 30 }
+    ], 20);
+    const point = Object.values(daily)[0];
+    expect(point.masteredCountSnapshot).toBeNull();
+    expect(point.missionsCompleted).toBe(0);
+  });
+
   it('migrates legacy v0 single-profile save data and recovers from corrupted JSON', () => {
     const legacyV0 = {
       name: 'Kamil_Legacy',
