@@ -182,8 +182,8 @@ const MISSION_SPECS: MissionSeedSpec[] = [
     lessonIntroEn: 'Place your left index finger on F and right index finger on J. Feel the small tactile ridges under your fingertips.',
     newKeys: ['f', 'j'],
     focusCategories: ['drill', 'alternation'],
-    requiredTypedChars: 55,
-    targetAccuracy: 0.82,
+    requiredTypedChars: 42,
+    targetAccuracy: 0.8,
   },
   {
     worldId: 2 - 1,
@@ -196,8 +196,8 @@ const MISSION_SPECS: MissionSeedSpec[] = [
     lessonIntroEn: 'Use your thumb to press the Spacebar. Maintain a calm, steady rhythm between character groups.',
     newKeys: [' '],
     focusCategories: ['drill', 'alternation'],
-    requiredTypedChars: 65,
-    targetAccuracy: 0.83,
+    requiredTypedChars: 52,
+    targetAccuracy: 0.82,
   },
   {
     worldId: 1,
@@ -210,8 +210,8 @@ const MISSION_SPECS: MissionSeedSpec[] = [
     lessonIntroEn: 'Your left middle finger rests naturally on key D, right next to F.',
     newKeys: ['d'],
     focusCategories: ['drill', 'coordination'],
-    requiredTypedChars: 75,
-    targetAccuracy: 0.84,
+    requiredTypedChars: 62,
+    targetAccuracy: 0.82,
   },
   {
     worldId: 1,
@@ -1055,22 +1055,37 @@ export function getMissionsByWorld(worldId: number): MissionDefinition[] {
  */
 export const REAL_WORDS_PL: string[] = [
   // Home row words (a, s, d, f, g, h, j, k, l)
-  'las', 'sala', 'fala', 'dala', 'lada', 'kasa', 'lalka', 'skala', 'flaga', 'hak', 'hala', 'kajak', 'jadalnia',
-  'klasa', 'skład', 'szlak', 'gad', 'sad', 'lak', 'kask', 'fasada', 'alga', 'saga',
-  // Home + Top row (e, i, r, u, w, o, t, y, q, p)
-  'pole', 'wieża', 'fort', 'tarcza', 'wiatr', 'góra', 'droga', 'rzeka', 'iskra', 'laser', 'radar', 'pilot',
-  'stal', 'mur', 'port', 'krew', 'trop', 'zamek', 'straż', 'ogień', 'zwiad', 'atak', 'furia', 'tytan',
-  'energia', 'reaktor', 'sektor', 'system', 'alarm', 'eskorta', 'orbita', 'planeta', 'rakieta', ' impuls',
-  // Full 3-row words (v, m, c, b, n, x, z)
-  'baza', 'moc', 'noc', 'most', 'brama', 'pocisk', 'pancerz', 'kanon', 'snajper', 'zwycięstwo', 'obrona',
-  'twierdza', 'bastion', 'granit', 'kryształ', 'pustynia', 'oaza', 'burza', 'piorun', 'mróz', 'śnieg',
-  'komenda', 'sygnał', 'wektor', 'matryca', 'oddział', 'legion', 'patrol', ' granica', 'rubież',
-  // Polish diacritics words (ą, ć, ę, ł, ń, ó, ś, ź, ż)
-  'wąwóz', 'głębia', 'błysk', 'żółw', 'źródło', 'śnieżyca', 'płomień', 'gałąź', 'dźwięk', 'żołnierz',
-  'pięść', 'część', 'szybkość', 'celność', 'mądrość', 'potężny', 'święty', 'księżyc', 'węzeł', 'łuk',
-  'strzała', 'król', 'wódz', 'wróg', 'bój', 'stój', 'życie', 'żelazo', 'źrebię', 'ćwicz', 'bądź', 'weź',
+  'las', 'sala', 'fala', 'dala', 'lada', 'kasa', 'lalka', 'skala', 'flaga', 'hak', 'hala', 'kajak',
+  'klasa', 'gad', 'sad', 'lak', 'kask', 'fasada', 'alga', 'saga', 'gala', 'daga', 'gafa', 'halka', 'laska', 'jad',
+  // Home + Top row: + e, i
+  'aleja', 'ile', 'klej', 'lej', 'kij', 'idea', 'lek', 'elf', 'figa', 'siedli', 'dali', 'jaki', 'sklej', 'lili',
+  // Home + Top row: + r, u
+  'mur', 'kura', 'rura', 'furia', 'iskra', 'kruk', 'druk', 'kier', 'ser', 'dar', 'gra', 'kra', 'figura', 'ulga', 'drugi',
+  // Home + Top row: + w, o
+  'woda', 'oko', 'pole', 'droga', 'krowa', 'sowa', 'worek', 'wioska', 'skok', 'krok', 'wrogowie', 'osada', 'odwaga', 'wojsko',
+  // Home + Top row: + t, y, q, p
+  'fort', 'wiatr', 'laser', 'radar', 'pilot', 'stal', 'port', 'krew', 'trop', 'atak', 'tytan',
+  'reaktor', 'sektor', 'system', 'eskorta', 'orbita', 'rakieta', 'pasek', 'piasek', 'stopa', 'wyspa', 'grupa',
+  'lupa', 'kopia', 'patrol', 'ekipa', 'kropka', 'potok', 'optyka', 'sterta', 'krytyk', 'lot', 'kot', 'tor', 'styl', 'gryf',
+  // Lower row additions: + v, m, c, b, n, x, z
+  'most', 'smok', 'alarm', 'impuls', 'rama', 'mapa', 'motor', 'armia', 'plama', 'forma', 'rytm', 'tama', 'dym', 'prom', 'kompas',
+  'moc', 'cel', 'ocena', 'taca', 'praca', 'owoc', 'ulica', 'stolica', 'chmura', 'tarcica',
+  'baza', 'noc', 'brama', 'pocisk', 'pancerz', 'kanon', 'snajper', 'obrona', 'niebo', 'energia', 'bunkier', 'antena', 'turbina',
+  'twierdza', 'bastion', 'granit', 'pustynia', 'oaza', 'burza', 'piorun', 'komenda', 'wektor', 'matryca', 'legion', 'granica',
+  'zamek', 'zwiad', 'tarcza', 'zapas', 'zegar', 'zbroja', 'zwrot', 'zrzut', 'szczyt', 'maszyna', 'rzeka',
+  // Polish diacritics: + ą, ę
+  'głębia', 'tętent', 'potęga', 'prąd', 'kąt', 'rząd', 'sąd', 'mąka', 'ręka', 'pętla', 'wędka', 'zęby', 'kępka', 'męstwo', 'zwycięstwo', 'piętro', 'księga', 'obręcz',
+  // Polish diacritics: + ł, ó
+  'wąwóz', 'błysk', 'węzeł', 'łuk', 'strzała', 'król', 'wódz', 'wróg', 'bój', 'stój', 'góra', 'skóra', 'pióro', 'młot',
+  'złoto', 'słowo', 'głowa', 'chłód', 'obłok', 'płot', 'szkło', 'oddział', 'sygnał', 'kryształ', 'skład', 'błąd', 'łąka',
+  // Polish diacritics: + ś, ć
+  'pięść', 'część', 'szybkość', 'celność', 'mądrość', 'święty', 'ćwicz', 'światło', 'świt', 'ślad', 'kość', 'gość', 'liść', 'wieść', 'nić', 'sieć', 'być', 'iść', 'środek', 'pościg',
+  // Polish diacritics: + ń, ż, ź
+  'żółw', 'źródło', 'śnieżyca', 'płomień', 'gałąź', 'dźwięk', 'żołnierz', 'potężny', 'księżyc', 'życie', 'żelazo',
+  'źrebię', 'bądź', 'weź', 'wieża', 'straż', 'mróz', 'śnieg', 'ogień', 'cień', 'koń', 'dłoń', 'broń', 'przystań', 'kamień',
+  'pierścień', 'żagiel', 'żar', 'żwir', 'ścieżka', 'źdźbło', 'źrenica', 'groźba', 'kuźnia', 'przyjaźń', 'więź', 'dźwig', 'łódź', 'miedź',
   // Capitalized words
-  'KeyFort', 'Polska', 'Warszawa', 'Kraków', 'Gdańsk', 'Wrocław', 'Poznań', 'Omega', 'Alfa', 'Tytan',
+  'KeyFort', 'Polska', 'Warszawa', 'Kraków', 'Gdańsk', 'Wrocław', 'Poznań', 'Omega', 'Alfa', 'Tytan', 'Bastion', 'Cytadela',
 ];
 
 export const REAL_WORDS_EN: string[] = [
@@ -1101,9 +1116,37 @@ export const ALPHANUMERIC_CODES: string[] = [
 ];
 
 export const SENTENCES_PL: string[] = [
+  // Home row grammatical phrases
+  'fala gasi las',
+  'klasa bada las',
+  'kajak i fala',
+  // Home + Top row grammatical sentences (no bottom row needed)
+  'stalowy fort stoi wysoko',
+  'eskorta pilnuje starego fortu',
+  'patrol pilnuje drogi i portu',
+  'wiatr wieje prosto w pole',
+  'reaktor ratuje stary sektor',
+  // Full 3-row grammatical Polish sentences (naturally diacritic-free for World 5)
+  'reaktor zasila nasz sektor obrony',
+  'snajper celuje prosto w pancerz wroga',
+  'zwiadowca obserwuje daleki horyzont',
+  'patrol pilnuje bramy oraz muru twierdzy',
+  'silny wiatr wieje prosto z zachodu',
+  'zimny front niesie lodowaty wiatr',
+  'celny pocisk rozbija tarcze tytana',
+  'radar wykrywa szybkie drony w lesie',
+  'skieruj laser prosto w centrum grupy',
+  'spokojna reka i precyzja daja sukces',
+  // Full Polish sentences with diacritics (World 6)
   'strzelaj celnie i chroń rdzeń twierdzy',
   'wieża mrozu spowalnia szybkie roje wrogów',
   'reaktor energii zasila całą linię obrony',
+  'potężna wieża mrozu spowalnia wrogów',
+  'żołnierze dzielnie bronią wąskiego wąwozu',
+  'błyskawica uderza w ciężki pancerz wroga',
+  'celność i szybkość budują najwyższą moc',
+  'wśród starożytnych ruin płonie jasne źródło',
+  // Full sentences with capitals, numbers, and punctuation (World 7 & 8)
   'Spokój i precyzja budują najwyższe kombo!',
   'Zbuduj Wieżę Tesli, aby rozbić tarcze wroga.',
   'Żołnierze bronią wąwozu przed potężną burzą.',
@@ -1111,6 +1154,8 @@ export const SENTENCES_PL: string[] = [
   'Każdy bezbłędny znak wzmacnia pancerz bazy.',
   'Czy snajper namierzył już głównego Tytana?',
   'Pisz bezwzrokowo, patrz na ekran i zwyciężaj!',
+  'Oddział Alfa-4 zabezpieczył północny most.',
+  'Twierdza KeyFort utrzymuje stabilną barierę: 95%!',
 ];
 
 export const SENTENCES_EN: string[] = [

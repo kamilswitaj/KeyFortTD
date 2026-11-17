@@ -1,3 +1,4 @@
+import { ENEMIES_DATA } from '../data/enemiesData';
 import { MAPS_DATA } from '../data/mapsData';
 import { TOWERS_DATA } from '../data/towersData';
 import {
@@ -6,6 +7,7 @@ import {
   EnemyType,
   FloatingTextEffect,
   GameMode,
+  KeyLessonObjective,
   MapDefinition,
   MissionDefinition,
   PlayerProfile,
@@ -13,11 +15,13 @@ import {
   TargetingPriority,
   TowerType,
   UpgradeBranch,
+  WaveDefinition,
 } from '../types';
 import { AdaptiveLearningEngine } from './AdaptiveLearningEngine';
 import { CombatSystem } from './CombatSystem';
 import { EnemySystem } from './EnemySystem';
 import { PathSystem } from './PathSystem';
+import { ProgressionEngine } from './ProgressionEngine';
 import { PowerState, ResourceEconomy } from './ResourceEconomy';
 import { TowerSystem } from './TowerSystem';
 import { KeystrokeResult, TypingEngine } from './TypingEngine';
@@ -31,6 +35,31 @@ export interface GameSessionConfig {
   unlimitedEnergy?: boolean;
   initialGameSpeed?: number;
 }
+
+export interface WaveEnemyPreviewItem {
+  enemyType: EnemyType;
+  count: number;
+  namePl: string;
+  nameEn: string;
+  traitPl: string;
+  traitEn: string;
+  counterTower: TowerType;
+  color: string;
+}
+
+const ENEMY_COUNTER_META: Record<
+  EnemyType,
+  { traitPl: string; traitEn: string; counterTower: TowerType }
+> = {
+  scout: { traitPl: 'Szybki', traitEn: 'Fast', counterTower: 'gun' },
+  tank: { traitPl: 'Ciężki Pancerz', traitEn: 'Heavy Armor', counterTower: 'sniper' },
+  shield: { traitPl: 'Tarcza Energetyczna', traitEn: 'Energy Shield', counterTower: 'tesla' },
+  swarm: { traitPl: 'Liczny Rój', traitEn: 'Dense Swarm', counterTower: 'cannon' },
+  ghost: { traitPl: 'Widmo (wymaga detekcji)', traitEn: 'Stealth Ghost', counterTower: 'tesla' },
+  splitter: { traitPl: 'Dzieli się po zniszczeniu', traitEn: 'Splits on Death', counterTower: 'frost' },
+  regenerator: { traitPl: 'Regeneruje HP', traitEn: 'Regenerates HP', counterTower: 'cannon' },
+  boss: { traitPl: 'Wielofazowy Boss', traitEn: 'Multi-Phase Boss', counterTower: 'sniper' },
+};
 
 export class GameSessionEngine {
   public readonly mode: GameMode;
@@ -54,10 +83,17 @@ export class GameSessionEngine {
   private sessionOver: boolean = false;
   private victory: boolean = false;
   private allWavesCleared: boolean = false;
+  private inFollowUpPractice: boolean = false;
+  private enemiesDefeatedCount: number = 0;
   private selectedPadIndex: number | null = null;
   private selectedTowerId: string | null = null;
   private bossAlertMessage: string | null = null;
   private bossAlertTimer: number = 0;
+  private abilityCooldowns: Record<'emp' | 'overdrive' | 'orbital', number> = {
+    emp: 0,
+    overdrive: 0,
+    orbital: 0,
+  };
 
   constructor(config: GameSessionConfig) {
     this.mode = config.mode;
@@ -82,7 +118,9 @@ export class GameSessionEngine {
       this.profile.characterMastery,
       this.profile.settings.language,
       16,
-      `${this.mission.id}_${Date.now()}`
+      `${this.mission.id}_${Date.now()}`,
+      Date.now(),
+      this.profile.bigramMastery
     );
     this.typingEngine = new TypingEngine(initialPrompts);
   }
@@ -123,6 +161,43 @@ export class GameSessionEngine {
     return this.victory;
   }
 
+  public isTacticalVictory(): boolean {
+    return this.allWavesCleared && this.lives > 0;
+  }
+
+  public isEducationalCompleted(): boolean {
+    if (this.mode !== 'campaign') return true;
+    return ProgressionEngine.checkEducationalCompletion(
+      this.mission,
+      this.profile,
+      this.typingEngine.getTotalCorrect(),
+      this.typingEngine.getAccuracy(),
+      this.typingEngine.getSessionKeyStats()
+    ).educationalCompleted;
+  }
+
+  public getKeyObjectives(): KeyLessonObjective[] {
+    if (this.mode !== 'campaign') return [];
+    const isRelaxed = this.profile.settings.difficulty === 'relaxed';
+    return ProgressionEngine.evaluateKeyObjectives(
+      this.mission,
+      isRelaxed,
+      this.typingEngine.getSessionKeyStats()
+    );
+  }
+
+  public isFollowUpPracticeActive(): boolean {
+    return this.inFollowUpPractice && !this.sessionOver;
+  }
+
+  public getEnemiesDefeatedCount(): number {
+    return this.enemiesDefeatedCount;
+  }
+
+  public getTotalDamageDealt(): number {
+    return this.towers.reduce((sum, t) => sum + t.totalDamageDealt, 0);
+  }
+
   public areAllWavesCleared(): boolean {
     return this.allWavesCleared;
   }
@@ -154,6 +229,7 @@ export class GameSessionEngine {
 
   public setSelectedPadIndex(padIndex: number | null): void {
     this.selectedPadIndex = padIndex;
+    this.typingEngine.markIdleBreak();
     if (padIndex !== null) {
       const existing = this.towers.find((t) => t.padIndex === padIndex);
       this.selectedTowerId = existing ? existing.id : null;
@@ -175,6 +251,64 @@ export class GameSessionEngine {
     return this.economy.getPowerState(this.typingEngine.getCombo());
   }
 
+  public getAbilityCooldown(ability: 'emp' | 'overdrive' | 'orbital'): number {
+    return Math.ceil(this.abilityCooldowns[ability]);
+  }
+
+  public canUseAbility(ability: 'emp' | 'overdrive' | 'orbital'): boolean {
+    if (this.sessionOver || this.isPaused) return false;
+    if (this.abilityCooldowns[ability] > 0) return false;
+    const cost = ability === 'emp' ? 35 : ability === 'overdrive' ? 45 : 65;
+    if (this.economy.getEnergy() < cost) return false;
+    if ((ability === 'emp' || ability === 'orbital') && this.enemies.length === 0) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Returns a preview of the current or upcoming wave's enemy groups and their counters.
+   */
+  public getUpcomingWavePreview(): { waveNumber: number; isBossWave: boolean; items: WaveEnemyPreviewItem[] } {
+    const waveNum = this.waveSystem.isWaveActive()
+      ? this.waveSystem.getCurrentWaveNumber()
+      : Math.min(this.mission.waves.length, this.waveSystem.getCurrentWaveNumber());
+    const waveDef: WaveDefinition | undefined =
+      this.mission.waves[waveNum - 1] ??
+      (this.mode === 'survival' ? WaveSystem.generateSurvivalWave(waveNum) : this.mission.waves[0]);
+
+    if (!waveDef) {
+      return { waveNumber: waveNum, isBossWave: false, items: [] };
+    }
+
+    const merged = new Map<EnemyType, number>();
+    for (const g of waveDef.groups) {
+      merged.set(g.enemyType, (merged.get(g.enemyType) ?? 0) + g.count);
+    }
+
+    const items: WaveEnemyPreviewItem[] = [];
+    for (const [eType, count] of merged.entries()) {
+      const def = ENEMIES_DATA[eType];
+      const meta = ENEMY_COUNTER_META[eType];
+      items.push({
+        enemyType: eType,
+        count,
+        namePl: def.namePl,
+        nameEn: def.nameEn,
+        traitPl: meta.traitPl,
+        traitEn: meta.traitEn,
+        counterTower: meta.counterTower,
+        color: def.color,
+      });
+    }
+
+    return {
+      waveNumber: waveDef.waveNumber,
+      isBossWave: Boolean(waveDef.isBossWave),
+      items,
+    };
+  }
+
   /**
    * Builds a tower on `padIndex` if unoccupied and affordable.
    */
@@ -191,6 +325,7 @@ export class GameSessionEngine {
     const def = TOWERS_DATA[type];
     if (!this.economy.spendGold(def.cost)) return null;
 
+    this.typingEngine.markIdleBreak();
     const tower = TowerSystem.createTower(type, pad, `${this.towers.length + 1}`);
     this.towers.push(tower);
     this.recalculateReactorBonuses();
@@ -206,6 +341,7 @@ export class GameSessionEngine {
     const maxTier = this.mode === 'sandbox' ? 3 : this.profile.unlockedUpgradeTiers;
     const ok = TowerSystem.upgradeTower(tower, branch, this.economy, maxTier);
     if (ok) {
+      this.typingEngine.markIdleBreak();
       this.recalculateReactorBonuses();
     }
     return ok;
@@ -215,6 +351,7 @@ export class GameSessionEngine {
     if (this.sessionOver) return 0;
     const idx = this.towers.findIndex((t) => t.id === towerId);
     if (idx === -1) return 0;
+    this.typingEngine.markIdleBreak();
     const [removed] = this.towers.splice(idx, 1);
     const refund = TowerSystem.getSellValue(removed);
     this.economy.addGold(refund);
@@ -228,6 +365,7 @@ export class GameSessionEngine {
   public setTowerTargeting(towerId: string, priority: TargetingPriority): void {
     const tower = this.towers.find((t) => t.id === towerId);
     if (tower) {
+      this.typingEngine.markIdleBreak();
       tower.targeting = priority;
     }
   }
@@ -260,6 +398,7 @@ export class GameSessionEngine {
 
   public startNextWave(): boolean {
     if (this.sessionOver || this.waveSystem.isWaveActive() || !this.waveSystem.hasMoreWaves()) return false;
+    this.typingEngine.markIdleBreak();
     const waveDef = this.waveSystem.startNextWave();
     if (!waveDef) return false;
     if (waveDef.isBossWave) {
@@ -282,15 +421,16 @@ export class GameSessionEngine {
 
   /**
    * Activates one of the 3 special energy abilities:
-   * - emp (35 Energy): destroys 60% of shields, reveals Ghosts, stuns all enemies for 1.8s
-   * - overdrive (45 Energy): forces 140% Overcharged state for 9 seconds
-   * - orbital (65 Energy): strikes all enemies for heavy damage (220 AoE)
+   * - emp (35 Energy, 14s cooldown): requires active enemies; strips 60% of shields, reveals Ghosts, stuns for 1.8s
+   * - overdrive (45 Energy, 16s cooldown): forces 140% Overcharged state for 8 seconds
+   * - orbital (65 Energy, 22s cooldown): requires active enemies; strikes enemies for 165 AoE damage
    */
   public triggerTacticalAbility(ability: 'emp' | 'overdrive' | 'orbital'): boolean {
-    if (this.sessionOver || this.isPaused) return false;
+    if (!this.canUseAbility(ability)) return false;
 
     if (ability === 'emp') {
       if (!this.economy.consumeEnergy(35)) return false;
+      this.abilityCooldowns.emp = 14;
       for (const e of this.enemies) {
         e.shield = Math.max(0, Math.round(e.shield * 0.35));
         e.isRevealed = true;
@@ -300,12 +440,12 @@ export class GameSessionEngine {
       this.projectiles.push({
         id: `emp_${Date.now()}`,
         kind: 'shockwave',
-        fromX: 480,
-        fromY: 260,
-        toX: 480,
-        toY: 260,
+        fromX: 465,
+        fromY: 240,
+        toX: 465,
+        toY: 240,
         color: '#38bdf8',
-        radius: 480,
+        radius: 460,
         progress: 0,
         duration: 0.55,
       });
@@ -314,14 +454,16 @@ export class GameSessionEngine {
 
     if (ability === 'overdrive') {
       if (!this.economy.consumeEnergy(45)) return false;
-      this.economy.activateOverdrive(9.0);
+      this.abilityCooldowns.overdrive = 16;
+      this.economy.activateOverdrive(8.0);
       return true;
     }
 
     if (ability === 'orbital') {
       if (!this.economy.consumeEnergy(65)) return false;
+      this.abilityCooldowns.orbital = 22;
       for (const e of this.enemies) {
-        CombatSystem.applyHitToEnemy(e, 220, { armorShredPercent: 0.8, shieldDamageMultiplier: 2.0 });
+        CombatSystem.applyHitToEnemy(e, 165, { armorShredPercent: 0.75, shieldDamageMultiplier: 1.8 });
         this.projectiles.push({
           id: `orb_${e.id}_${Date.now()}`,
           kind: 'orbital',
@@ -330,13 +472,14 @@ export class GameSessionEngine {
           toX: e.x,
           toY: e.y,
           color: '#f43f5e',
-          radius: 45,
+          radius: 42,
           progress: 0,
           duration: 0.45,
         });
       }
       const res = CombatSystem.resolveDefeatedEnemies(this.enemies, this.path, this.economy);
       this.enemies = res.survivingEnemies;
+      this.enemiesDefeatedCount += res.defeatedEnemies.length;
       return true;
     }
 
@@ -366,22 +509,45 @@ export class GameSessionEngine {
         this.projectiles.push(...effects);
         const resolved = CombatSystem.resolveDefeatedEnemies(this.enemies, this.path, this.economy);
         this.enemies = resolved.survivingEnemies;
+        this.enemiesDefeatedCount += resolved.defeatedEnemies.length;
       }
 
       // Replenish prompt queue if running low
       if (this.typingEngine.getRemainingQueueLength() < 4) {
-        const more = AdaptiveLearningEngine.generateExerciseBatch(
-          this.mission,
-          this.profile.characterMastery,
-          this.profile.settings.language,
-          10,
-          `${this.mission.id}_more_${now}`,
-          now
-        );
-        this.typingEngine.appendPrompts(more);
+        if (this.inFollowUpPractice) {
+          const edu = ProgressionEngine.checkEducationalCompletion(
+            this.mission,
+            this.profile,
+            this.typingEngine.getTotalCorrect(),
+            this.typingEngine.getAccuracy(),
+            this.typingEngine.getSessionKeyStats()
+          );
+          const followUpMore = AdaptiveLearningEngine.generateFollowUpPracticeBatch(
+            edu.unmetKeys,
+            this.mission.allowedKeys,
+            this.profile.characterMastery,
+            this.profile.bigramMastery,
+            this.profile.settings.language,
+            6,
+            `${this.mission.id}_followup_${now}`
+          );
+          this.typingEngine.appendPrompts(followUpMore);
+        } else {
+          const more = AdaptiveLearningEngine.generateExerciseBatch(
+            this.mission,
+            this.profile.characterMastery,
+            this.profile.settings.language,
+            10,
+            `${this.mission.id}_more_${now}`,
+            now,
+            this.profile.bigramMastery,
+            this.typingEngine.getRecentPromptTexts()
+          );
+          this.typingEngine.appendPrompts(more);
+        }
       }
 
-      this.checkVictoryCondition();
+      this.checkVictoryOrFollowUpCondition();
     }
 
     return result;
@@ -393,20 +559,28 @@ export class GameSessionEngine {
   public update(rawDtSec: number): {
     shotsFiredByType: Record<string, number>;
     waveCompleted: boolean;
+    goldChanged: boolean;
   } {
     if (this.isPaused || this.sessionOver) {
-      return { shotsFiredByType: {}, waveCompleted: false };
+      return { shotsFiredByType: {}, waveCompleted: false, goldChanged: false };
     }
 
     const dtSec = Math.min(0.1, rawDtSec) * this.gameSpeed;
+    const prevGold = this.economy.getGold();
 
     if (this.bossAlertTimer > 0) {
       this.bossAlertTimer = Math.max(0, this.bossAlertTimer - rawDtSec);
     }
 
+    for (const k of ['emp', 'overdrive', 'orbital'] as const) {
+      if (this.abilityCooldowns[k] > 0) {
+        this.abilityCooldowns[k] = Math.max(0, this.abilityCooldowns[k] - dtSec);
+      }
+    }
+
     const { passiveEnergyPerSec, goldPerWave } = this.getReactorPassiveStats();
-    // Base passive trickle of 0.35 energy/sec + reactor passive
-    this.economy.update(dtSec, 0.35 + passiveEnergyPerSec);
+    // Gentle passive trickle (0.20/s) + reactor passive
+    this.economy.update(dtSec, 0.2 + passiveEnergyPerSec);
 
     // 1. Update wave spawner
     const waveTick = this.waveSystem.update(dtSec, this.path, this.enemies.length);
@@ -422,6 +596,17 @@ export class GameSessionEngine {
       const step = EnemySystem.updateEnemy(enemy, dtSec, this.path);
       if (step.spawnedMinions.length > 0) {
         newlySpawnedMinions.push(...step.spawnedMinions);
+      }
+      if (step.bossPhaseTriggered) {
+        this.floatingTexts.push({
+          id: `boss_phase_${Date.now()}_${Math.random()}`,
+          x: enemy.x,
+          y: enemy.y - 26,
+          text: `⚡ FAZA ${step.bossPhaseTriggered}!`,
+          color: '#facc15',
+          life: 1.2,
+          maxLife: 1.2,
+        });
       }
       if (step.reachedBase) {
         this.lives = Math.max(0, this.lives - enemy.baseDamage);
@@ -444,7 +629,8 @@ export class GameSessionEngine {
     if (this.lives <= 0) {
       this.sessionOver = true;
       this.victory = false;
-      return { shotsFiredByType: {}, waveCompleted: false };
+      this.inFollowUpPractice = false;
+      return { shotsFiredByType: {}, waveCompleted: false, goldChanged: this.economy.getGold() !== prevGold };
     }
 
     // 3. Towers attack
@@ -462,7 +648,19 @@ export class GameSessionEngine {
     const resolved = CombatSystem.resolveDefeatedEnemies(this.enemies, this.path, this.economy);
     this.enemies = resolved.survivingEnemies;
     if (resolved.defeatedEnemies.length > 0) {
+      this.enemiesDefeatedCount += resolved.defeatedEnemies.length;
       this.score += resolved.defeatedEnemies.length * 25 + resolved.bossesDefeated * 500;
+      for (const dead of resolved.defeatedEnemies.slice(0, 3)) {
+        this.floatingTexts.push({
+          id: `gold_${dead.id}`,
+          x: dead.x,
+          y: dead.y - 10,
+          text: `+${dead.goldReward}🪙`,
+          color: '#facc15',
+          life: 0.7,
+          maxLife: 0.7,
+        });
+      }
     }
 
     // 5. Check wave completion
@@ -474,7 +672,7 @@ export class GameSessionEngine {
 
       if (!this.waveSystem.hasMoreWaves() && this.enemies.length === 0) {
         this.allWavesCleared = true;
-        this.checkVictoryCondition();
+        this.checkVictoryOrFollowUpCondition();
       }
     } else if (
       !this.waveSystem.isWaveActive() &&
@@ -484,7 +682,7 @@ export class GameSessionEngine {
       this.waveSystem.getPendingSpawnCount() === 0
     ) {
       this.allWavesCleared = true;
-      this.checkVictoryCondition();
+      this.checkVictoryOrFollowUpCondition();
     }
 
     // 6. Update visual projectile & floating text lifetimes
@@ -499,6 +697,7 @@ export class GameSessionEngine {
     return {
       shotsFiredByType: combatEvents.shotsFiredByType,
       waveCompleted,
+      goldChanged: this.economy.getGold() !== prevGold,
     };
   }
 
@@ -509,14 +708,41 @@ export class GameSessionEngine {
       : this.mission.requiredTypedChars;
   }
 
-  private checkVictoryCondition(): void {
+  private checkVictoryOrFollowUpCondition(): void {
     if (this.sessionOver || this.mode === 'survival' || this.mode === 'sandbox') return;
-    if (!this.allWavesCleared) return;
+    if (!this.allWavesCleared || this.lives <= 0) return;
 
-    const reqChars = this.getRequiredCharsForVictory();
-    if (this.typingEngine.getTotalCorrect() >= reqChars && this.lives > 0) {
+    const edu = ProgressionEngine.checkEducationalCompletion(
+      this.mission,
+      this.profile,
+      this.typingEngine.getTotalCorrect(),
+      this.typingEngine.getAccuracy(),
+      this.typingEngine.getSessionKeyStats()
+    );
+
+    if (edu.educationalCompleted) {
+      this.inFollowUpPractice = false;
       this.sessionOver = true;
       this.victory = true;
+      return;
+    }
+
+    // Tactical victory achieved, but educational objectives are not yet complete:
+    // Enter Follow-Up Practice mode with a short targeted drill on unmet keys!
+    if (!this.inFollowUpPractice) {
+      this.inFollowUpPractice = true;
+      const followUpPrompts = AdaptiveLearningEngine.generateFollowUpPracticeBatch(
+        edu.unmetKeys,
+        this.mission.allowedKeys,
+        this.profile.characterMastery,
+        this.profile.bigramMastery,
+        this.profile.settings.language,
+        6,
+        `${this.mission.id}_followup_start`
+      );
+      if (followUpPrompts.length > 0) {
+        this.typingEngine.setPrompts(followUpPrompts);
+      }
     }
   }
 }

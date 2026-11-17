@@ -172,4 +172,61 @@ describe('Curriculum, Polish Keyboard, TypingEngine, and AdaptiveLearningEngine'
     const rFinal = engine.processKeyInput('w', masteryMap, bigramMap, 0, 12600, false);
     expect(rFinal.sequenceCompleted).toBe(true);
   });
+
+  it('uses bigram accuracy and transition time to prioritize weak bigrams without monotony', () => {
+    const allowedSet = new Set(['f', 'j', 'd', 'k', 's', 'l', 'a', ' ']);
+    const bigramMap: Record<string, BigramStats> = {
+      kl: { bigram: 'kl', attempts: 12, correct: 5, errors: 7, avgTransitionMs: 880 },
+      la: { bigram: 'la', attempts: 20, correct: 20, errors: 0, avgTransitionMs: 240 },
+    };
+
+    const bgWeights = AdaptiveLearningEngine.computeBigramWeights(allowedSet, bigramMap);
+    expect(bgWeights.get('kl')!).toBeGreaterThan(4.0);
+    expect(bgWeights.has('la')).toBe(false);
+
+    const mission = MISSIONS_DATA.find((m) => m.id === 'w2_m2')!;
+    const batch = AdaptiveLearningEngine.generateExerciseBatch(
+      mission,
+      {},
+      'pl',
+      12,
+      'bigram_test',
+      Date.now(),
+      bigramMap
+    );
+    expect(batch.some((item) => item.text.includes('kl'))).toBe(true);
+  });
+
+  it('does not distort reaction time or WPM after a long planning break or window blur', () => {
+    const masteryMap: Record<string, CharacterStats> = {};
+    const bigramMap: Record<string, BigramStats> = {};
+    const engine = new TypingEngine([
+      {
+        id: 'p_break',
+        text: 'fjdk fjdk',
+        category: 'drill',
+        isDrill: true,
+        targetKeys: ['f', 'j', 'd', 'k'],
+        difficulty: 1,
+      },
+    ]);
+
+    engine.processKeyInput('f', masteryMap, bigramMap, 0, 1000, false);
+    engine.processKeyInput('j', masteryMap, bigramMap, 0, 1300, false);
+    // Simulate a 25-second tower-building break before typing 'd'
+    const afterBreak = engine.processKeyInput('d', masteryMap, bigramMap, 0, 26300, false);
+    expect(afterBreak.reactionMs).toBeLessThanOrEqual(450);
+    expect(masteryMap['d'].avgReactionMs).toBeLessThanOrEqual(700);
+  });
+
+  it('ensures Polish lessons use natural Polish words and do not mix English-only vocabulary', () => {
+    const m12 = MISSIONS_DATA.find((m) => m.id === 'w2_m6')!;
+    const batchPl = AdaptiveLearningEngine.generateExerciseBatch(m12, {}, 'pl', 20, 'pl_only');
+    const englishOnlyWords = ['flask', 'shall', 'glad', 'jagged'];
+    for (const item of batchPl) {
+      for (const eng of englishOnlyWords) {
+        expect(item.text.includes(eng)).toBe(false);
+      }
+    }
+  });
 });

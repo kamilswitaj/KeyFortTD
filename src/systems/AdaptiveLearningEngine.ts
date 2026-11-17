@@ -8,6 +8,7 @@ import {
 } from '../data/curriculumData';
 import { lookupCharKey } from '../data/keyboardData';
 import {
+  BigramStats,
   CharacterStats,
   ExerciseCategory,
   Language,
@@ -23,8 +24,7 @@ export class AdaptiveLearningEngine {
   public static isStringAllowed(candidate: string, allowedSet: ReadonlySet<string>): boolean {
     if (!candidate || candidate.length === 0) return false;
     for (let i = 0; i < candidate.length; i++) {
-      const ch = candidate[i];
-      if (!allowedSet.has(ch)) {
+      if (!allowedSet.has(candidate[i])) {
         return false;
       }
     }
@@ -32,7 +32,12 @@ export class AdaptiveLearningEngine {
   }
 
   /**
-   * Computes adaptive selection weights for each allowed non-space key.
+   * Computes adaptive selection weights for each allowed non-space key using:
+   * - Recently introduced keys
+   * - Character accuracy
+   * - Character reaction time
+   * - Spaced repetition review schedule
+   * - Practice history (unpracticed vs over-practiced keys)
    */
   public static computeCharacterWeights(
     allowedKeys: string[],
@@ -49,33 +54,35 @@ export class AdaptiveLearningEngine {
 
       // Boost newly introduced keys in the current mission
       if (newSet.has(key)) {
-        weight += 3.2;
+        weight += 3.5;
       }
 
       const stat = masteryMap[key];
       if (!stat || stat.attempts < 5) {
         // Unpracticed or barely practiced key
-        weight += 2.2;
+        weight += 2.4;
       } else {
         const accuracy = stat.correct / stat.attempts;
-        if (accuracy < 0.8) {
-          weight += 3.5;
-        } else if (accuracy < 0.9) {
-          weight += 1.8;
+        if (accuracy < 0.78) {
+          weight += 3.8;
+        } else if (accuracy < 0.88) {
+          weight += 2.0;
+        } else if (accuracy < 0.93) {
+          weight += 0.8;
         }
 
         if (stat.avgReactionMs > 850) {
-          weight += 1.8;
-        } else if (stat.avgReactionMs > 650) {
-          weight += 0.9;
+          weight += 2.0;
+        } else if (stat.avgReactionMs > 620) {
+          weight += 1.0;
         }
 
         // Spaced repetition reinforcement for mastered keys due for review
         if (stat.status === 'mastered') {
           if (stat.nextReviewAt <= now) {
-            weight += 1.4;
+            weight += 1.5;
           } else {
-            weight = Math.max(0.6, weight * 0.65);
+            weight = Math.max(0.55, weight * 0.6);
           }
         }
       }
@@ -86,21 +93,65 @@ export class AdaptiveLearningEngine {
     return weights;
   }
 
-  public static pickWeightedKey(weights: Map<string, number>, rng: SeededRandom): string {
+  /**
+   * Computes adaptive weights for character pairs (bigrams) based on:
+   * - Bigram accuracy (error rate)
+   * - Bigram transition time (`avgTransitionMs`)
+   */
+  public static computeBigramWeights(
+    allowedSet: ReadonlySet<string>,
+    bigramMap: Record<string, BigramStats> = {}
+  ): Map<string, number> {
+    const bgWeights = new Map<string, number>();
+
+    for (const [bg, stat] of Object.entries(bigramMap)) {
+      if (bg.length !== 2) continue;
+      if (!allowedSet.has(bg[0]) || !allowedSet.has(bg[1])) continue;
+      if (stat.attempts < 2) continue;
+
+      const accuracy = stat.correct / stat.attempts;
+      let boost = 0;
+
+      if (accuracy < 0.75) {
+        boost += 4.2;
+      } else if (accuracy < 0.88) {
+        boost += 2.4;
+      } else if (accuracy < 0.94) {
+        boost += 0.9;
+      }
+
+      if (stat.avgTransitionMs > 720) {
+        boost += 2.2;
+      } else if (stat.avgTransitionMs > 520) {
+        boost += 1.1;
+      }
+
+      if (boost > 0) {
+        bgWeights.set(bg, 1.0 + boost);
+      }
+    }
+
+    return bgWeights;
+  }
+
+  public static pickWeightedKey(weights: Map<string, number>, rng: SeededRandom, excludeKey?: string): string {
     const entries = Array.from(weights.entries());
     if (entries.length === 0) return 'f';
+    const filtered = excludeKey && entries.length > 1 ? entries.filter(([k]) => k !== excludeKey) : entries;
     let total = 0;
-    for (const [, w] of entries) total += w;
+    for (const [, w] of filtered) total += w;
     let roll = rng.next() * total;
-    for (const [k, w] of entries) {
+    for (const [k, w] of filtered) {
       roll -= w;
       if (roll <= 0) return k;
     }
-    return entries[entries.length - 1][0];
+    return filtered[filtered.length - 1][0];
   }
 
   /**
    * Generates a tailored batch of typing exercises for a mission or survival/sandbox run.
+   * Uses character accuracy, character reaction time, bigram accuracy, bigram transition time,
+   * recently introduced keys, spaced repetition, and practice history.
    */
   public static generateExerciseBatch(
     mission: Pick<
@@ -111,28 +162,34 @@ export class AdaptiveLearningEngine {
     language: Language = 'pl',
     count: number = 12,
     seed: number | string = `${mission.id}_batch`,
-    now: number = Date.now()
+    now: number = Date.now(),
+    bigramMap: Record<string, BigramStats> = {},
+    recentPromptTexts: string[] = []
   ): TypingPromptItem[] {
     const rng = new SeededRandom(seed);
     const allowedSet = new Set(mission.allowedKeys);
     const newKeys = mission.newKeys.filter((key) => allowedSet.has(key));
     if (!mission.allowedKeys.some((key) => key !== ' ')) return [];
+
     const hasSpace = allowedSet.has(' ');
-    const weights = AdaptiveLearningEngine.computeCharacterWeights(
+    const charWeights = AdaptiveLearningEngine.computeCharacterWeights(
       mission.allowedKeys,
       newKeys,
       masteryMap,
       now
     );
+    const bigramWeights = AdaptiveLearningEngine.computeBigramWeights(allowedSet, bigramMap);
+    const recentSet = new Set<string>(recentPromptTexts);
 
-    // Filter word and sentence banks strictly by allowedSet
-    const primaryWords = (language === 'pl' ? [...REAL_WORDS_PL, ...REAL_WORDS_EN] : [...REAL_WORDS_EN, ...REAL_WORDS_PL])
+    // Filter word and sentence banks strictly by language and allowedSet
+    const rawWordPool = language === 'pl' ? REAL_WORDS_PL : REAL_WORDS_EN;
+    const primaryWords = rawWordPool
       .map((w) => w.trim())
       .filter((w) => AdaptiveLearningEngine.isStringAllowed(w, allowedSet));
 
     const allowedSyllables = SYLLABLES_BANK.filter((s) => AdaptiveLearningEngine.isStringAllowed(s, allowedSet));
     const allowedCodes = ALPHANUMERIC_CODES.filter((c) => AdaptiveLearningEngine.isStringAllowed(c, allowedSet));
-    const rawSentences = language === 'pl' ? [...SENTENCES_PL, ...SENTENCES_EN] : [...SENTENCES_EN, ...SENTENCES_PL];
+    const rawSentences = language === 'pl' ? SENTENCES_PL : SENTENCES_EN;
     const allowedSentences = rawSentences.filter((s) => AdaptiveLearningEngine.isStringAllowed(s, allowedSet));
 
     const items: TypingPromptItem[] = [];
@@ -151,7 +208,9 @@ export class AdaptiveLearningEngine {
         mission.allowedKeys,
         allowedSet,
         hasSpace,
-        weights,
+        charWeights,
+        bigramWeights,
+        recentSet,
         primaryWords,
         allowedSyllables,
         allowedCodes,
@@ -159,10 +218,54 @@ export class AdaptiveLearningEngine {
         rng
       );
 
-      items.push(prompt);
+      // Post-condition curriculum safety check: strip any character not in allowedSet
+      const safeText = Array.from(prompt.text)
+        .filter((ch) => allowedSet.has(ch))
+        .join('');
+
+      if (safeText.length > 0) {
+        prompt.text = safeText;
+        recentSet.add(safeText);
+        items.push(prompt);
+      }
     }
 
     return items;
+  }
+
+  /**
+   * Generates a short, targeted follow-up practice sequence when a player wins the tactical
+   * battle but still needs a few more accurate presses on newly introduced keys.
+   */
+  public static generateFollowUpPracticeBatch(
+    unmetKeys: string[],
+    allowedKeys: string[],
+    masteryMap: Record<string, CharacterStats>,
+    bigramMap: Record<string, BigramStats>,
+    language: Language = 'pl',
+    count: number = 4,
+    seed: number | string = 'followup'
+  ): TypingPromptItem[] {
+    const allowedSet = new Set(allowedKeys);
+    const validFocusKeys = unmetKeys.filter((k) => k !== ' ' && allowedSet.has(k));
+    const focusKeys = validFocusKeys.length > 0 ? validFocusKeys : allowedKeys.filter((k) => k !== ' ').slice(0, 2);
+
+    return AdaptiveLearningEngine.generateExerciseBatch(
+      {
+        id: 'followup_practice',
+        worldId: 1,
+        missionIndex: 1,
+        newKeys: focusKeys,
+        allowedKeys,
+        focusCategories: ['drill', 'words', 'coordination'],
+      },
+      masteryMap,
+      language,
+      count,
+      seed,
+      Date.now(),
+      bigramMap
+    );
   }
 
   private static buildSinglePrompt(
@@ -172,7 +275,9 @@ export class AdaptiveLearningEngine {
     allowedKeys: string[],
     allowedSet: ReadonlySet<string>,
     hasSpace: boolean,
-    weights: Map<string, number>,
+    charWeights: Map<string, number>,
+    bigramWeights: Map<string, number>,
+    recentSet: Set<string>,
     allowedWords: string[],
     allowedSyllables: string[],
     allowedCodes: string[],
@@ -183,8 +288,14 @@ export class AdaptiveLearningEngine {
     const nonSpaceAllowed = allowedKeys.filter((k) => k !== ' ');
 
     if (category === 'sentences' && hasSpace && (allowedSentences.length > 0 || allowedWords.length >= 3)) {
-      if (allowedSentences.length > 0 && (allowedWords.length < 3 || rng.next() < 0.65)) {
-        const sentence = AdaptiveLearningEngine.pickWeightedCandidate(allowedSentences, weights, rng);
+      if (allowedSentences.length > 0 && (allowedWords.length < 3 || rng.next() < 0.72)) {
+        const sentence = AdaptiveLearningEngine.pickWeightedCandidate(
+          allowedSentences,
+          charWeights,
+          bigramWeights,
+          recentSet,
+          rng
+        );
         return {
           id: `prompt_${index}_sentence`,
           text: sentence,
@@ -194,11 +305,20 @@ export class AdaptiveLearningEngine {
           difficulty: 4,
         };
       }
-      // Build a multi-word tactical phrase from allowed real words
+      // Build a multi-word tactical phrase from allowed real words without immediate duplicate words
       const wordCount = rng.nextInt(3, 4);
       const chosenWords: string[] = [];
+      const localUsed = new Set<string>(recentSet);
       for (let w = 0; w < wordCount; w++) {
-        chosenWords.push(AdaptiveLearningEngine.pickWeightedCandidate(allowedWords, weights, rng));
+        const picked = AdaptiveLearningEngine.pickWeightedCandidate(
+          allowedWords,
+          charWeights,
+          bigramWeights,
+          localUsed,
+          rng
+        );
+        chosenWords.push(picked);
+        localUsed.add(picked);
       }
       return {
         id: `prompt_${index}_phrase`,
@@ -211,8 +331,21 @@ export class AdaptiveLearningEngine {
     }
 
     if (category === 'numbers_symbols' && allowedCodes.length > 0 && hasSpace) {
-      const code1 = AdaptiveLearningEngine.pickWeightedCandidate(allowedCodes, weights, rng);
-      const code2 = AdaptiveLearningEngine.pickWeightedCandidate(allowedCodes, weights, rng);
+      const code1 = AdaptiveLearningEngine.pickWeightedCandidate(
+        allowedCodes,
+        charWeights,
+        bigramWeights,
+        recentSet,
+        rng
+      );
+      const localUsed = new Set<string>([...recentSet, code1]);
+      const code2 = AdaptiveLearningEngine.pickWeightedCandidate(
+        allowedCodes,
+        charWeights,
+        bigramWeights,
+        localUsed,
+        rng
+      );
       const text = code1 === code2 ? code1 : `${code1} ${code2}`;
       if (AdaptiveLearningEngine.isStringAllowed(text, allowedSet)) {
         return {
@@ -236,8 +369,17 @@ export class AdaptiveLearningEngine {
       if (hasSpace) {
         const countWords = rng.nextInt(2, 3);
         const picked: string[] = [];
+        const localUsed = new Set<string>(recentSet);
         for (let w = 0; w < countWords; w++) {
-          picked.push(AdaptiveLearningEngine.pickWeightedCandidate(pool, weights, rng));
+          const word = AdaptiveLearningEngine.pickWeightedCandidate(
+            pool,
+            charWeights,
+            bigramWeights,
+            localUsed,
+            rng
+          );
+          picked.push(word);
+          localUsed.add(word);
         }
         return {
           id: `prompt_${index}_words`,
@@ -248,7 +390,13 @@ export class AdaptiveLearningEngine {
           difficulty: 2,
         };
       } else {
-        const single = AdaptiveLearningEngine.pickWeightedCandidate(pool, weights, rng);
+        const single = AdaptiveLearningEngine.pickWeightedCandidate(
+          pool,
+          charWeights,
+          bigramWeights,
+          recentSet,
+          rng
+        );
         return {
           id: `prompt_${index}_word`,
           text: single,
@@ -263,9 +411,24 @@ export class AdaptiveLearningEngine {
     if ((category === 'syllables' || category === 'bigrams') && allowedSyllables.length >= 2) {
       const groupCount = hasSpace ? 3 : 1;
       const groups: string[] = [];
+      const localUsed = new Set<string>();
       for (let g = 0; g < groupCount; g++) {
-        const syl1 = AdaptiveLearningEngine.pickWeightedCandidate(allowedSyllables, weights, rng);
-        const syl2 = AdaptiveLearningEngine.pickWeightedCandidate(allowedSyllables, weights, rng);
+        const syl1 = AdaptiveLearningEngine.pickWeightedCandidate(
+          allowedSyllables,
+          charWeights,
+          bigramWeights,
+          localUsed,
+          rng
+        );
+        localUsed.add(syl1);
+        const syl2 = AdaptiveLearningEngine.pickWeightedCandidate(
+          allowedSyllables,
+          charWeights,
+          bigramWeights,
+          localUsed,
+          rng
+        );
+        localUsed.add(syl2);
         groups.push(`${syl1}${syl2}`);
       }
       return {
@@ -285,21 +448,38 @@ export class AdaptiveLearningEngine {
       nonSpaceNew,
       nonSpaceAllowed,
       hasSpace,
-      weights,
+      charWeights,
+      bigramWeights,
       rng
     );
   }
 
-  private static pickWeightedCandidate(
+  /**
+   * Scores candidates using both character weights and bigram transition/accuracy weights,
+   * while penalizing recently used items to prevent monotony.
+   */
+  public static pickWeightedCandidate(
     candidates: string[],
-    weights: Map<string, number>,
+    charWeights: Map<string, number>,
+    bigramWeights: Map<string, number>,
+    recentSet: ReadonlySet<string>,
     rng: SeededRandom
   ): string {
     if (candidates.length === 1) return candidates[0];
     const scored = candidates.map((text) => {
       let score = 1.0;
       for (let i = 0; i < text.length; i++) {
-        score += (weights.get(text[i]) ?? 1.0) * 0.35;
+        score += (charWeights.get(text[i]) ?? 1.0) * 0.35;
+        if (i < text.length - 1) {
+          const bg = text.slice(i, i + 2);
+          const bgW = bigramWeights.get(bg);
+          if (bgW && bgW > 1) {
+            score += (bgW - 1) * 1.45;
+          }
+        }
+      }
+      if (recentSet.has(text)) {
+        score *= 0.08;
       }
       return { text, score };
     });
@@ -319,32 +499,52 @@ export class AdaptiveLearningEngine {
     nonSpaceNew: string[],
     nonSpaceAllowed: string[],
     hasSpace: boolean,
-    weights: Map<string, number>,
+    charWeights: Map<string, number>,
+    bigramWeights: Map<string, number>,
     rng: SeededRandom
   ): TypingPromptItem {
     const leftKeys = nonSpaceAllowed.filter((k) => lookupCharKey(k)?.keyDef.hand === 'left');
     const rightKeys = nonSpaceAllowed.filter((k) => lookupCharKey(k)?.keyDef.hand === 'right');
 
-    const groupsCount = hasSpace ? 3 : 1;
-    const groupLen = hasSpace ? 4 : 8;
+    // Collect top weak bigrams if any exist
+    const weakBigrams = Array.from(bigramWeights.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([bg]) => bg);
+
+    const groupsCount = hasSpace ? 3 : 2;
+    const groupLen = hasSpace ? 4 : 3;
     const groups: string[] = [];
 
     for (let g = 0; g < groupsCount; g++) {
       let chunk = '';
-      if (category === 'alternation' && leftKeys.length > 0 && rightKeys.length > 0) {
+      if (weakBigrams.length > 0 && (category === 'bigrams' || g === 1)) {
+        const bg = weakBigrams[(index + g) % weakBigrams.length];
+        const filler = AdaptiveLearningEngine.pickWeightedKey(charWeights, rng, bg[1]);
+        chunk = groupLen === 4 ? `${bg}${bg}` : `${bg}${filler}`;
+      } else if (category === 'alternation' && leftKeys.length > 0 && rightKeys.length > 0) {
         const lKey = leftKeys[rng.nextInt(0, leftKeys.length - 1)];
         const rKey = rightKeys[rng.nextInt(0, rightKeys.length - 1)];
-        for (let c = 0; c < groupLen; c++) {
-          chunk += c % 2 === 0 ? lKey : rKey;
+        const patternIdx = (index + g) % 3;
+        if (patternIdx === 0) {
+          chunk = `${lKey}${rKey}${lKey}${groupLen === 4 ? rKey : ''}`;
+        } else if (patternIdx === 1) {
+          chunk = `${rKey}${lKey}${rKey}${groupLen === 4 ? lKey : ''}`;
+        } else {
+          chunk = `${lKey}${lKey}${rKey}${groupLen === 4 ? rKey : ''}`;
         }
       } else {
         const focusKey =
           nonSpaceNew.length > 0
             ? nonSpaceNew[(index + g) % nonSpaceNew.length]
-            : AdaptiveLearningEngine.pickWeightedKey(weights, rng);
-        const partnerKey = AdaptiveLearningEngine.pickWeightedKey(weights, rng);
-        for (let c = 0; c < groupLen; c++) {
-          chunk += c % 2 === 0 ? focusKey : partnerKey;
+            : AdaptiveLearningEngine.pickWeightedKey(charWeights, rng);
+        const partnerKey = AdaptiveLearningEngine.pickWeightedKey(charWeights, rng, focusKey);
+        const patternIdx = (index + g) % 3;
+        if (patternIdx === 0) {
+          chunk = `${focusKey}${partnerKey}${focusKey}${groupLen === 4 ? partnerKey : ''}`;
+        } else if (patternIdx === 1) {
+          chunk = `${focusKey}${focusKey}${partnerKey}${groupLen === 4 ? focusKey : ''}`;
+        } else {
+          chunk = `${partnerKey}${focusKey}${focusKey}${groupLen === 4 ? partnerKey : ''}`;
         }
       }
       groups.push(chunk);
@@ -353,7 +553,7 @@ export class AdaptiveLearningEngine {
     return {
       id: `prompt_${index}_drill`,
       text: groups.join(hasSpace ? ' ' : ''),
-      category: category === 'alternation' || category === 'coordination' ? category : 'drill',
+      category: category === 'alternation' || category === 'coordination' || category === 'bigrams' ? category : 'drill',
       isDrill: true,
       targetKeys: nonSpaceNew.length > 0 ? nonSpaceNew : nonSpaceAllowed.slice(0, 2),
       difficulty: 1,

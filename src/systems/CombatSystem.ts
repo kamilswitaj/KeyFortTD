@@ -159,7 +159,7 @@ export class CombatSystem {
       tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
 
       // Consume energy if available; if energy is 0, tower still fires at baseline efficiency!
-      const hadEnergy = economy.consumeEnergy(stats.energyPerShot);
+      const hadEnergy = economy.drainTowerShotEnergy(stats.energyPerShot);
       const shotDamageMultiplier = hadEnergy
         ? efficiency >= 1.3
           ? 1.22

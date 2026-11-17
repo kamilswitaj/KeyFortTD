@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { MISSIONS_DATA } from '../../src/data/curriculumData';
 import { PersistenceService } from '../../src/services/PersistenceService';
 import { AchievementSystem } from '../../src/systems/AchievementSystem';
+import { GameSessionEngine } from '../../src/systems/GameSessionEngine';
 import { ProgressionEngine } from '../../src/systems/ProgressionEngine';
 
 describe('PersistenceService, Migration, ProgressionEngine, and AchievementSystem', () => {
@@ -143,5 +144,73 @@ describe('PersistenceService, Migration, ProgressionEngine, and AchievementSyste
     expect(unlockedAch.some((a) => a.id === 'first_defense')).toBe(true);
     expect(unlockedAch.some((a) => a.id === 'perfect_wave')).toBe(true);
     expect(unlockedAch.some((a) => a.id === 'combo_100')).toBe(true);
+  });
+
+  it('enforces per-key objectives for new keys and offers a follow-up practice activity on tactical victory', () => {
+    const profile = PersistenceService.createDefaultProfile();
+    const m3 = MISSIONS_DATA.find((m) => m.id === 'w1_m3')!; // introduces 'd'
+
+    // If total chars are met (70) with 95% accuracy, but new key 'd' was only practiced twice -> educationalCompleted is false!
+    const incompleteKeyOutcome = ProgressionEngine.evaluateMissionResult(
+      m3,
+      profile,
+      20,
+      20,
+      70,
+      0.95,
+      25,
+      30,
+      {
+        f: { key: 'f', attempts: 35, correct: 34, errors: 1 },
+        j: { key: 'j', attempts: 35, correct: 34, errors: 1 },
+        d: { key: 'd', attempts: 2, correct: 2, errors: 0 },
+      }
+    );
+    expect(incompleteKeyOutcome.tacticalVictory).toBe(true);
+    expect(incompleteKeyOutcome.educationalCompleted).toBe(false);
+    expect(incompleteKeyOutcome.victory).toBe(false);
+
+    // Verify Follow-Up Practice flow in GameSessionEngine
+    const session = new GameSessionEngine({
+      mode: 'campaign',
+      mission: MISSIONS_DATA[0], // w1_m1
+      profile,
+      unlimitedGold: true,
+    });
+    session.buildTower('gun', 1);
+    session.buildTower('cannon', 2);
+    session.buildTower('gun', 3);
+
+    // Type only 12 chars before waves finish
+    let now = 1000;
+    for (let i = 0; i < 12; i++) {
+      const ch = session.typingEngine.getExpectedChar();
+      if (ch) session.handleKeyInput(ch, (now += 300), false);
+    }
+
+    let ticks = 0;
+    while (!session.areAllWavesCleared() && ticks < 4000) {
+      if (!session.waveSystem.isWaveActive() && session.waveSystem.hasMoreWaves()) {
+        session.startNextWave();
+      }
+      session.update(0.1);
+      ticks++;
+    }
+
+    expect(session.isTacticalVictory()).toBe(true);
+    expect(session.isEducationalCompleted()).toBe(false);
+    expect(session.isFollowUpPracticeActive()).toBe(true);
+    expect(session.isSessionOver()).toBe(false);
+
+    // Complete the short follow-up practice without replaying the battle
+    while (!session.isSessionOver() && now < 200000) {
+      const ch = session.typingEngine.getExpectedChar();
+      if (!ch) break;
+      session.handleKeyInput(ch, (now += 300), false);
+    }
+
+    expect(session.isEducationalCompleted()).toBe(true);
+    expect(session.isVictory()).toBe(true);
+    expect(session.isSessionOver()).toBe(true);
   });
 });

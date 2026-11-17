@@ -411,6 +411,23 @@ export interface CosmeticItem {
   previewColor: string;
 }
 
+export interface SessionKeyStats {
+  key: string;
+  attempts: number;
+  correct: number;
+  errors: number;
+}
+
+export interface KeyLessonObjective {
+  key: string;
+  requiredCorrect: number;
+  correct: number;
+  attempts: number;
+  targetAccuracy: number;
+  accuracy: number;
+  completed: boolean;
+}
+
 export interface MissionProgressRecord {
   missionId: string;
   completed: boolean;

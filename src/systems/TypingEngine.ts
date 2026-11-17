@@ -1,4 +1,4 @@
-import { BigramStats, CharacterStats, TypingPromptItem } from '../types';
+import { BigramStats, CharacterStats, SessionKeyStats, TypingPromptItem } from '../types';
 import { MasteryEngine } from './MasteryEngine';
 
 export const IGNORED_MODIFIER_KEYS = new Set([
@@ -37,6 +37,13 @@ export const IGNORED_MODIFIER_KEYS = new Set([
   'ArrowRight',
 ]);
 
+/**
+ * Any gap longer than 2.5s between keystrokes is treated as a tactical planning / tower management break
+ * so it never inflates character reaction times or distorts WPM and active practice time.
+ */
+export const MAX_ACTIVE_KEYSTROKE_GAP_MS = 2500;
+export const RESUME_BURST_BASELINE_MS = 380;
+
 export interface KeystrokeResult {
   ignored: boolean;
   isCorrect: boolean;
@@ -65,28 +72,43 @@ export class TypingEngine {
   private pauseStartedAt: number = 0;
   private lastWrongKey: string | null = null;
   private lastErrorTimestamp: number = 0;
+  private sessionKeyStats: Record<string, SessionKeyStats> = {};
+  private recentPromptTexts: string[] = [];
 
   constructor(initialPrompts: TypingPromptItem[] = []) {
     this.setPrompts(initialPrompts);
   }
 
-  public setPrompts(prompts: TypingPromptItem[], now: number = Date.now()): void {
+  public setPrompts(prompts: TypingPromptItem[], _now: number = Date.now()): void {
     this.queue = [...prompts];
-    this.advanceToNextPrompt(now);
+    this.advanceToNextPrompt();
   }
 
   public appendPrompts(prompts: TypingPromptItem[]): void {
     this.queue.push(...prompts);
     if (!this.currentPrompt) {
-      this.advanceToNextPrompt(Date.now());
+      this.advanceToNextPrompt();
     }
   }
 
-  private advanceToNextPrompt(now: number): void {
+  private advanceToNextPrompt(): void {
     const next = this.queue.shift() ?? null;
+    if (next) {
+      this.recentPromptTexts.push(next.text);
+      if (this.recentPromptTexts.length > 16) {
+        this.recentPromptTexts.shift();
+      }
+    }
     this.currentPrompt = next;
     this.cursorIndex = 0;
-    this.lastKeystrokeTimestamp = now;
+  }
+
+  /**
+   * Marks an intentional break in typing (e.g. window blur, visibility hidden, or tower management click)
+   * so the next keystroke starts a fresh burst without counting the break duration.
+   */
+  public markIdleBreak(): void {
+    this.lastKeystrokeTimestamp = 0;
   }
 
   public pause(now: number = Date.now()): void {
@@ -158,7 +180,7 @@ export class TypingEngine {
   }
 
   public getWpm(): number {
-    if (this.activeTypingDurationMs < 1500 || this.totalCorrect === 0) return 0;
+    if (this.activeTypingDurationMs < 1200 || this.totalCorrect === 0) return 0;
     const minutes = this.activeTypingDurationMs / 60000;
     const standardWords = this.totalCorrect / 5;
     return Math.min(220, Math.round(standardWords / minutes));
@@ -177,6 +199,14 @@ export class TypingEngine {
 
   public getRemainingQueueLength(): number {
     return this.queue.length;
+  }
+
+  public getSessionKeyStats(): Record<string, SessionKeyStats> {
+    return this.sessionKeyStats;
+  }
+
+  public getRecentPromptTexts(): string[] {
+    return this.recentPromptTexts;
   }
 
   /**
@@ -212,12 +242,17 @@ export class TypingEngine {
       };
     }
 
-    const rawReaction = this.lastKeystrokeTimestamp > 0 ? now - this.lastKeystrokeTimestamp : 450;
-    const reactionMs = Math.max(60, Math.min(3500, rawReaction));
+    const elapsedSinceLast = this.lastKeystrokeTimestamp > 0 ? now - this.lastKeystrokeTimestamp : -1;
+    const isFreshBurst = elapsedSinceLast < 0 || elapsedSinceLast > MAX_ACTIVE_KEYSTROKE_GAP_MS;
+    const reactionMs = isFreshBurst
+      ? RESUME_BURST_BASELINE_MS
+      : Math.max(60, Math.min(MAX_ACTIVE_KEYSTROKE_GAP_MS, elapsedSinceLast));
+
     this.activeTypingDurationMs += reactionMs;
     this.lastKeystrokeTimestamp = now;
 
-    const prevChar = this.cursorIndex > 0 ? this.currentPrompt.text[this.cursorIndex - 1] : null;
+    // Only record bigram transition if this keystroke was part of a continuous typing burst
+    const prevChar = !isFreshBurst && this.cursorIndex > 0 ? this.currentPrompt.text[this.cursorIndex - 1] : null;
     const { isCorrect } = MasteryEngine.recordKeystroke(
       masteryMap,
       bigramMap,
@@ -229,6 +264,19 @@ export class TypingEngine {
     );
 
     this.totalAttempts += 1;
+    const existingSessionKey = this.sessionKeyStats[expectedChar] ?? {
+      key: expectedChar,
+      attempts: 0,
+      correct: 0,
+      errors: 0,
+    };
+    existingSessionKey.attempts += 1;
+    if (isCorrect) {
+      existingSessionKey.correct += 1;
+    } else {
+      existingSessionKey.errors += 1;
+    }
+    this.sessionKeyStats[expectedChar] = existingSessionKey;
 
     if (isCorrect) {
       this.totalCorrect += 1;
@@ -252,7 +300,7 @@ export class TypingEngine {
         completedPrompt = this.currentPrompt;
         // Completion bonus energy
         energyGenerated += 6.0 * (1 + reactorKeystrokeBonus);
-        this.advanceToNextPrompt(now);
+        this.advanceToNextPrompt();
       }
 
       return {

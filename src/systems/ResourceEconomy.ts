@@ -50,6 +50,10 @@ export class ResourceEconomy {
     this.energy = Math.min(this.getMaxEnergy(), this.energy + amount);
   }
 
+  /**
+   * Atomic energy purchase (used by active abilities).
+   * Preserves current energy if amount cannot be afforded.
+   */
   public consumeEnergy(amount: number): boolean {
     if (this.unlimitedEnergy) return true;
     if (amount <= 0) return true;
@@ -57,6 +61,21 @@ export class ResourceEconomy {
       this.energy = Math.max(0, this.energy - amount);
       return true;
     }
+    return false;
+  }
+
+  /**
+   * Drains energy for a tower shot. If remaining energy is positive but less than `amount`,
+   * drains the remaining fractional reserve so energy reaches 0 and transitions to baseline state.
+   */
+  public drainTowerShotEnergy(amount: number): boolean {
+    if (this.unlimitedEnergy) return true;
+    if (amount <= 0) return true;
+    if (this.energy >= amount) {
+      this.energy = Math.max(0, this.energy - amount);
+      return true;
+    }
+    this.energy = 0;
     return false;
   }
 
@@ -80,6 +99,10 @@ export class ResourceEconomy {
     this.overdriveTimerSec = Math.max(this.overdriveTimerSec, durationSec);
   }
 
+  public getOverdriveRemainingSec(): number {
+    return Number(this.overdriveTimerSec.toFixed(1));
+  }
+
   public update(dtSec: number, passiveEnergyPerSec: number = 0): void {
     if (this.overdriveTimerSec > 0) {
       this.overdriveTimerSec = Math.max(0, this.overdriveTimerSec - dtSec);
@@ -94,7 +117,7 @@ export class ResourceEconomy {
       return 'overcharged';
     }
     const ratio = this.energy / this.getMaxEnergy();
-    if (ratio >= 0.72 || (this.energy >= 20 && currentCombo >= 20)) {
+    if (ratio >= 0.72 || (ratio >= 0.5 && currentCombo >= 25)) {
       return 'overcharged';
     }
     if (this.energy > 0.5) {
