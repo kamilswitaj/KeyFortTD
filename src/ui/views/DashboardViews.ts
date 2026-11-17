@@ -236,7 +236,7 @@ export class DashboardViews {
                             : `✓ ${i18n.pick('Ukończona', 'Completed')}`;
                         return `<div style="display:flex; justify-content:space-between; background:#090d16; padding:0.38rem 0.6rem; border-radius:6px;">
                             <span><strong>${escapeHtml(h.missionId)}</strong> (${escapeHtml(h.mode)} • ${statusBadge})</span>
-                            <span>🎯 ${Math.round(h.accuracy * 100)}% | ⚡ ${escapeHtml(h.wpm)} WPM | 🔥 ${escapeHtml(h.maxCombo)}</span>
+                            <span>🎯 ${h.charsTyped + h.errors > 0 ? `${Math.round(h.accuracy * 100)}%` : "—"} | ⚡ ${escapeHtml(h.wpm)} WPM | 🔥 ${escapeHtml(h.maxCombo)}</span>
                           </div>`;
                       })
                       .join('')}

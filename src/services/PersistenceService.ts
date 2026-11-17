@@ -79,7 +79,6 @@ export class PersistenceService {
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingFlush: boolean = false;
   private lastStorageError: string | null = null;
-  private onExternalSyncCallback: (() => void) | null = null;
   private lastPersistedJson: string | null = null;
   private storageConflict = false;
   private onStorageErrorCallback: (() => void) | null = null;
@@ -100,10 +99,6 @@ export class PersistenceService {
   constructor() {
     this.data = this.loadFromStorage();
     this.bindLifecycleAndMultiTabSync();
-  }
-
-  public setOnExternalSync(cb: () => void): void {
-    this.onExternalSyncCallback = cb;
   }
 
   public getLastStorageError(): string | null {
@@ -805,14 +800,17 @@ export class PersistenceService {
       clearTimeout(this.throttleTimer);
       this.throttleTimer = null;
     }
+    const wasPending = this.pendingFlush;
     this.pendingFlush = false;
     const target = customData ?? this.data;
     try {
       if (typeof localStorage === 'undefined') {
+        this.pendingFlush = !customData || wasPending;
         this.reportStorageError('Pamięć przeglądarki (localStorage) jest niedostępna.');
         return false;
       }
       if (this.storageConflict || localStorage.getItem(STORAGE_KEY) !== this.lastPersistedJson) {
+        this.pendingFlush = !customData || wasPending;
         this.reportStorageConflict();
         return false;
       }
@@ -827,6 +825,7 @@ export class PersistenceService {
       this.onStorageErrorCallback?.();
       return true;
     } catch (e) {
+      this.pendingFlush = !customData || wasPending;
       this.reportStorageError(
         e instanceof Error
           ? `Błąd zapisu danych (${e.name}): ${e.message}`

@@ -66,3 +66,11 @@ Open the local URL displayed by Vite (typically `http://localhost:5173`) in any 
 - [Educational Curriculum & Adaptive Engine Documentation](docs/CURRICULUM.md)
 - [Gameplay Balancing Documentation](docs/BALANCING.md)
 - [GitHub Pages Deployment Workflow](.github/workflows/deploy.yml)
+
+## Family saves and safe local play
+
+Profiles and progress are stored in the current browser's localStorage (per origin). Use one active tab at a time. If another tab changes the save, the stale tab refuses to overwrite it and offers an export of its local data. Export the local backup before reloading. This is conflict detection, not cross-device or transactional synchronization. Do not clear browser data without a backup.
+
+Mission rankings use recorded difficulty-specific results; older records with unknown difficulty remain in personal progress, not competitive leaderboards. Historical mastery is unavailable when no daily snapshot exists. Daily charts cover the retained history, not invented lifetime values.
+
+Production UI smoke test: after `npm run build`, set `E2E_PROD=1` and run `npm run test:e2e -- production.spec.ts`. The production application does not expose the development test hook.

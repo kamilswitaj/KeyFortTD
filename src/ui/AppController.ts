@@ -154,8 +154,8 @@ export class AppController {
 
   public navigateTo(screen: ScreenId): void {
     if (this.currentScreen === 'gameplay' && screen !== 'gameplay' && this.activeSession) {
-      if (!this.activeSession.isSessionOver() && !this.activeSession.isFinalized()) {
-        this.finalizeSession(this.activeSession, 'abandoned');
+      if (!this.activeSession.isFinalized()) {
+        this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
       }
       this.stopGameLoop();
       this.activeSession = null;
@@ -186,8 +186,8 @@ export class AppController {
     }
 
     // Finalize any previous unfinished session before starting a new one
-    if (this.activeSession && !this.activeSession.isSessionOver() && !this.activeSession.isFinalized()) {
-      this.finalizeSession(this.activeSession, 'abandoned');
+    if (this.activeSession && !this.activeSession.isFinalized()) {
+      this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
     }
 
     this.persistence.flushSave();
@@ -476,8 +476,8 @@ export class AppController {
   }
 
   private executeProfileSwitch(targetProfileId: string, startPlayAfterSwitch: boolean = false): void {
-    if (this.activeSession && !this.activeSession.isSessionOver() && !this.activeSession.isFinalized()) {
-      this.finalizeSession(this.activeSession, 'abandoned');
+    if (this.activeSession && !this.activeSession.isFinalized()) {
+      this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
     }
     this.stopGameLoop();
     this.activeSession = null;
@@ -638,6 +638,20 @@ export class AppController {
   }
 
   private bindGlobalKeyboardAndFocus(): void {
+    // Reload/close must retain practice just like explicitly leaving a mission.
+    window.addEventListener('pagehide', () => {
+      const session = this.activeSession;
+      if (session && !session.isFinalized()) {
+        this.finalizeSession(session, session.isSessionOver() ? 'completed' : 'abandoned');
+      }
+      this.stopGameLoop();
+      this.activeSession = null;
+      if (this.currentScreen === 'gameplay') this.currentScreen = 'main_menu';
+      this.persistence.flushSave();
+    });
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) this.renderCurrentScreen();
+    });
     window.addEventListener('blur', () => {
       if (this.activeSession) {
         this.activeSession.typingEngine.markIdleBreak();
@@ -759,6 +773,9 @@ export class AppController {
     const slot = this.container.querySelector('#storage-warning-slot');
     if (!slot) return;
     const error = this.persistence.getLastStorageError();
+    if (!error && !slot.hasChildNodes()) return;
+    if (error && slot.getAttribute('data-error') === error) return;
+    slot.setAttribute('data-error', error ?? '');
     slot.innerHTML = error ? `<div class="storage-warning-banner" role="alert" data-testid="storage-warning-banner">
       <span>⚠️ ${escapeHtml(error)}</span>
       <button class="nav-btn" data-action="backup-storage">${this.i18n.pick('Eksportuj kopię', 'Export backup')}</button>
@@ -1460,8 +1477,8 @@ export class AppController {
       this.container.querySelectorAll('[data-action="exit-gameplay"]').forEach((btn) => {
         btn.addEventListener('click', () => {
           if (this.activeSession) {
-            if (!this.activeSession.isSessionOver() && !this.activeSession.isFinalized()) {
-              this.finalizeSession(this.activeSession, 'abandoned');
+            if (!this.activeSession.isFinalized()) {
+              this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
             }
             this.stopGameLoop();
             this.activeSession = null;

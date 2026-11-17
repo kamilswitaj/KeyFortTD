@@ -481,7 +481,7 @@ export class StatisticsEngine {
         }
       } else {
         // 'all' difficulties: pick the player's highest-scoring difficulty record or overall record
-        const diffEntries = mRec.byDifficulty ? Object.values(mRec.byDifficulty).filter(Boolean) : [];
+        const diffEntries = mRec.byDifficulty ? Object.values(mRec.byDifficulty).filter((record) => record?.completed) : [];
         if (diffEntries.length > 0) {
           const bestDiff = diffEntries.sort((a, b) => b!.bestScore - a!.bestScore)[0]!;
           entries.push({
@@ -494,7 +494,7 @@ export class StatisticsEngine {
             bestQualifyingWpm: bestDiff.bestQualifyingWpm,
             stars: bestDiff.stars,
             maxCombo: bestDiff.maxCombo,
-            timesCompleted: mRec.timesCompleted,
+            timesCompleted: bestDiff.timesCompleted,
             isFamilyRecord: false,
           });
         }
