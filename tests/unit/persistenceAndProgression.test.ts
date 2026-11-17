@@ -346,9 +346,9 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     const freshService = new PersistenceService();
     expect(freshService.getAllProfiles().length).toBe(1);
 
-    const impRes = service.importSaveJson(exported);
+    const impRes = freshService.importSaveJson(exported);
     expect(impRes.success).toBe(true);
-    expect(service.getAllProfiles().length).toBe(2);
+    expect(freshService.getAllProfiles().length).toBe(2);
   });
 
   it('rejects malformed, out-of-range, or malicious imports without overwriting valid saves', () => {

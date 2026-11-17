@@ -640,9 +640,13 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
 
       // In-game fullscreen toggle button and header pause
       await page.getByTestId('toggle-fullscreen-btn').click();
+      await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
       await page.getByTestId('gameplay-header-pause-btn').click();
       await expect(page.locator('#gameplay-header-status')).toContainText('WSTRZYMANA');
       await page.getByTestId('gameplay-header-pause-btn').click();
+      // Restore normal window state before the next viewport resize.
+      await page.getByTestId('toggle-fullscreen-btn').click();
+      await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(false);
     }
 
     // Exit gameplay via header exit button returns to campaign map
