@@ -179,7 +179,7 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     // Switch language PL -> EN
     await page.getByTestId('lang-toggle-btn').click();
     await expect(page.getByTestId('lang-toggle-btn')).toContainText('EN');
-    await expect(page.getByTestId('nav-campaign')).toContainText('Educational Campaign');
+    await expect(page.getByTestId('nav-campaign')).toContainText('Campaign');
 
     // Open Profiles screen, create a second profile, and switch back and forth
     await page.getByTestId('nav-profiles').click();
@@ -653,5 +653,52 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await page.getByTestId('exit-gameplay-btn').click();
     await expect(page.getByTestId('campaign-map-screen')).toBeVisible();
     await expect(page.locator('.top-header')).toBeVisible();
+  });
+
+  test('V2.0 Training Academy, Standardized Typing Test, Challenges/Heroes, Interactive World Map, and full top-nav visibility at 1440x900', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+
+    // All top navigation items including Settings must fit inside the 1440px viewport without horizontal clipping
+    const settingsNavBox = await page.getByTestId('nav-settings').boundingBox();
+    expect(settingsNavBox).not.toBeNull();
+    expect(settingsNavBox!.x + settingsNavBox!.width).toBeLessThanOrEqual(1440);
+
+    // 1. Open Interactive World Map & switch world via SVG map node
+    await page.getByTestId('nav-campaign').click();
+    await expect(page.getByTestId('interactive-world-map')).toBeVisible();
+    await page.getByTestId('world-map-node-2').click();
+    await expect(page.getByTestId('mission-card-w2_m1')).toBeVisible();
+
+    // 2. Open Training Academy & complete a Standardized Typing Test
+    await page.getByTestId('nav-training-academy').click();
+    await expect(page.getByTestId('training-academy-screen')).toBeVisible();
+    await page.getByTestId('academy-tab-standardized').click();
+    await expect(page.getByTestId('standardized-test-panel')).toBeVisible();
+    await page.getByTestId('start-standardized-test-btn').click();
+    await expect(page.getByTestId('training-active-screen')).toBeVisible();
+
+    for (let i = 0; i < 18; i++) {
+      const ch = await page.evaluate(() => {
+        const box = document.querySelector('[data-testid="training-sequence-box"] .char-current');
+        const txt = box?.textContent ?? '';
+        return txt === '␣' ? ' ' : txt;
+      });
+      if (ch) await page.keyboard.press(ch === ' ' ? 'Space' : ch);
+    }
+
+    await page.getByTestId('finish-training-btn').click();
+    await expect(page.getByTestId('training-result-banner')).toBeVisible();
+    await expect(page.getByTestId('standardized-leaderboard-table')).toBeVisible();
+
+    // 3. Open Challenges, Heroes & Tech Tree screen
+    await page.getByTestId('nav-challenges').click();
+    await expect(page.getByTestId('challenges-screen')).toBeVisible();
+    await expect(page.getByTestId('challenge-card-daily')).toBeVisible();
+    await expect(page.getByTestId('challenge-card-weekly')).toBeVisible();
+    await expect(page.getByTestId('hero-card-guardian')).toBeVisible();
+    await expect(page.getByTestId('tech-node-tech_kinetic_1')).toBeVisible();
   });
 });

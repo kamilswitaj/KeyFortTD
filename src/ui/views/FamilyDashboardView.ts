@@ -433,11 +433,11 @@ export class FamilyDashboardView {
       `;
     }
 
-    const w = 320;
-    const h = 115;
-    const padL = 32;
-    const padR = 14;
-    const padT = 12;
+    const w = 330;
+    const h = 122;
+    const padL = 46;
+    const padR = 16;
+    const padT = 18;
     const padB = 22;
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;

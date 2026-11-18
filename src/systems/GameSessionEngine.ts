@@ -3,11 +3,13 @@ import { MAPS_DATA } from '../data/mapsData';
 import { TOWERS_DATA } from '../data/towersData';
 import {
   ActiveEnemy,
+  ActiveHero,
   ActiveTower,
   DifficultyLevel,
   EnemyType,
   FloatingTextEffect,
   GameMode,
+  HeroId,
   KeyLessonObjective,
   MapDefinition,
   MissionDefinition,
@@ -21,8 +23,10 @@ import {
 import { AdaptiveLearningEngine } from './AdaptiveLearningEngine';
 import { CombatSystem } from './CombatSystem';
 import { EnemySystem } from './EnemySystem';
+import { HeroSystem } from './HeroSystem';
 import { PathSystem } from './PathSystem';
 import { ProgressionEngine } from './ProgressionEngine';
+import { RenderEffectSystem } from './RenderEffectSystem';
 import { PowerState, ResourceEconomy } from './ResourceEconomy';
 import { TowerSystem } from './TowerSystem';
 import { KeystrokeResult, TypingEngine } from './TypingEngine';
@@ -60,7 +64,11 @@ const ENEMY_COUNTER_META: Record<
   swarm: { traitPl: 'Liczny Rój', traitEn: 'Dense Swarm', counterTower: 'cannon' },
   ghost: { traitPl: 'Widmo (wymaga detekcji)', traitEn: 'Stealth Ghost', counterTower: 'tesla' },
   splitter: { traitPl: 'Dzieli się po zniszczeniu', traitEn: 'Splits on Death', counterTower: 'frost' },
-  regenerator: { traitPl: 'Regeneruje HP', traitEn: 'Regenerates HP', counterTower: 'cannon' },
+  regenerator: { traitPl: 'Regeneruje HP', traitEn: 'Regenerates HP', counterTower: 'flame' },
+  armored_elite: { traitPl: 'Ciężki Pancerz', traitEn: 'Heavy Armor', counterTower: 'laser' },
+  evasive: { traitPl: 'Unika pocisków', traitEn: 'Projectile Dodge', counterTower: 'tesla' },
+  hover: { traitPl: 'Jednostka Latająca', traitEn: 'Flying Hover', counterTower: 'drone' },
+  support: { traitPl: 'Leczy Sojuszników', traitEn: 'Heals Allies', counterTower: 'sniper' },
   boss: { traitPl: 'Wielofazowy Boss', traitEn: 'Multi-Phase Boss', counterTower: 'sniper' },
 };
 
@@ -83,9 +91,11 @@ export class GameSessionEngine {
   public readonly economy: ResourceEconomy;
   public readonly waveSystem: WaveSystem;
   public readonly typingEngine: TypingEngine;
+  public readonly renderEffects: RenderEffectSystem = new RenderEffectSystem();
 
   private profile: PlayerProfile;
   private finalized: boolean = false;
+  private hero: ActiveHero | null = null;
   private towers: ActiveTower[] = [];
   private enemies: ActiveEnemy[] = [];
   private projectiles: ProjectileEffect[] = [];
@@ -129,7 +139,24 @@ export class GameSessionEngine {
     this.lives = config.mission.startingLives;
     this.maxLives = config.mission.startingLives;
 
+    const chosenHeroId = config.profile.selectedHeroId ?? null;
+    if (chosenHeroId && (config.mode !== 'campaign' || config.mission.globalIndex >= 4)) {
+      const endWp = this.map.waypoints[this.map.waypoints.length - 1] ?? { x: 820, y: 200 };
+      const anchor = {
+        x: Math.max(80, Math.min(860, endWp.x - 95)),
+        y: Math.max(60, Math.min(340, endWp.y + (endWp.y > 200 ? -55 : 55))),
+      };
+      this.hero = HeroSystem.createActiveHero(chosenHeroId, anchor);
+      if (chosenHeroId === 'guardian') {
+        this.lives += 2;
+        this.maxLives += 2;
+      }
+    }
+
     this.economy = new ResourceEconomy(config.mission.startingGold, 50);
+    if (this.hero?.id === 'engineer') {
+      this.economy.setBonusMaxEnergy(15);
+    }
     if (config.unlimitedGold || config.unlimitedEnergy) {
       this.economy.setUnlimitedResources(Boolean(config.unlimitedGold), Boolean(config.unlimitedEnergy));
     }
@@ -421,12 +448,35 @@ export class GameSessionEngine {
   }
 
   private recalculateReactorBonuses(): void {
-    let bonusMaxEnergy = 0;
+    let bonusMaxEnergy = this.hero?.id === 'engineer' ? 15 : 0;
     for (const tower of this.towers) {
       const stats = TowerSystem.computeBaseAndUpgradeStats(tower);
       bonusMaxEnergy += stats.maxEnergyBonus;
     }
     this.economy.setBonusMaxEnergy(bonusMaxEnergy);
+  }
+
+  public getHero(): ActiveHero | null {
+    return this.hero;
+  }
+
+  public triggerHeroAbility(slotIndex: 0 | 1): boolean {
+    if (!this.hero || this.sessionOver || this.isPaused) return false;
+    const result = HeroSystem.triggerHeroAbility(
+      this.hero,
+      slotIndex,
+      this.enemies,
+      this.economy,
+      (healAmt) => {
+        this.lives = Math.min(this.maxLives, this.lives + healAmt);
+      }
+    );
+    if (!result.triggered) return false;
+    this.projectiles.push(...result.projectiles);
+    this.floatingTexts.push(...result.floatingTexts);
+    this.renderEffects.spawnShockwave(this.hero.x, this.hero.y, 160, '#38bdf8', 0.45, 3);
+    this.renderEffects.triggerShake(4, 0.22);
+    return true;
   }
 
   public getReactorPassiveStats(): {
@@ -541,11 +591,12 @@ export class GameSessionEngine {
    */
   public handleKeyInput(key: string, now: number = Date.now(), isRepeat: boolean = false): KeystrokeResult {
     const { keystrokeEnergyMultiplier } = this.getReactorPassiveStats();
+    const heroBonus = this.hero?.id === 'engineer' ? 0.12 : 0;
     const result = this.typingEngine.processKeyInput(
       key,
       this.profile.characterMastery,
       this.profile.bigramMastery,
-      keystrokeEnergyMultiplier,
+      keystrokeEnergyMultiplier + heroBonus,
       now,
       isRepeat
     );
@@ -553,6 +604,12 @@ export class GameSessionEngine {
     if (!result.ignored && result.isCorrect) {
       this.economy.addEnergy(result.energyGenerated);
       this.score += Math.round(10 * (1 + result.combo * 0.05));
+
+      const targetTower = this.towers[this.typingEngine.getTotalCorrect() % Math.max(1, this.towers.length)];
+      const endWp = this.map.waypoints[this.map.waypoints.length - 1] ?? { x: 860, y: 200 };
+      const orbToX = targetTower ? targetTower.x : endWp.x - 32;
+      const orbToY = targetTower ? targetTower.y : endWp.y;
+      this.renderEffects.spawnEnergyOrb(465, 395, orbToX, orbToY, result.sequenceCompleted ? '#facc15' : '#38bdf8');
 
       if (result.sequenceCompleted) {
         const effects = CombatSystem.triggerSequenceCompletionEffects(this.towers, this.enemies);
@@ -683,7 +740,7 @@ export class GameSessionEngine {
       return { shotsFiredByType: {}, waveCompleted: false, goldChanged: this.economy.getGold() !== prevGold };
     }
 
-    // 3. Towers attack
+    // 3. Towers & Hero attack
     const combatEvents = CombatSystem.updateTowers(
       dtSec,
       this.towers,
@@ -694,12 +751,25 @@ export class GameSessionEngine {
     this.projectiles.push(...combatEvents.projectilesCreated);
     this.floatingTexts.push(...combatEvents.floatingTextsCreated);
 
+    if (this.hero) {
+      const heroEvents = HeroSystem.updateHero(this.hero, dtSec, this.enemies, this.economy);
+      this.projectiles.push(...heroEvents.projectilesCreated);
+      this.floatingTexts.push(...heroEvents.floatingTextsCreated);
+    }
+
     // 4. Resolve enemy deaths & splitter fragments
     const resolved = CombatSystem.resolveDefeatedEnemies(this.enemies, this.path, this.economy);
     this.enemies = resolved.survivingEnemies;
     if (resolved.defeatedEnemies.length > 0) {
       this.enemiesDefeatedCount += resolved.defeatedEnemies.length;
       this.score += resolved.defeatedEnemies.length * 25 + resolved.bossesDefeated * 500;
+      for (const dead of resolved.defeatedEnemies) {
+        this.renderEffects.spawnBurst(dead.x, dead.y, dead.color, dead.isBoss ? 28 : 8, 'spark', dead.isBoss ? 140 : 85);
+        if (dead.isBoss) {
+          this.renderEffects.spawnShockwave(dead.x, dead.y, 120, '#f43f5e', 0.55, 4);
+          this.renderEffects.triggerShake(7, 0.35);
+        }
+      }
       for (const dead of resolved.defeatedEnemies.slice(0, 3)) {
         this.floatingTexts.push({
           id: `gold_${dead.id}`,
@@ -719,6 +789,9 @@ export class GameSessionEngine {
       waveCompleted = true;
       this.economy.addGold(waveTick.completedWaveDef.bonusGold + goldPerWave);
       this.score += 150;
+      if (this.hero) {
+        HeroSystem.addHeroXp(this.hero, 45);
+      }
 
       if (!this.waveSystem.hasMoreWaves() && this.enemies.length === 0) {
         this.allWavesCleared = true;
@@ -743,6 +816,8 @@ export class GameSessionEngine {
     this.floatingTexts = this.floatingTexts
       .map((f) => ({ ...f, y: f.y - 18 * rawDtSec, life: f.life - rawDtSec }))
       .filter((f) => f.life > 0);
+
+    this.renderEffects.update(rawDtSec);
 
     return {
       shotsFiredByType: combatEvents.shotsFiredByType,

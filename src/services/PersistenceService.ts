@@ -11,6 +11,7 @@ import {
   DifficultyLevel,
   DifficultyMissionRecord,
   GameMode,
+  HeroId,
   Language,
   MasteryStatus,
   MissionProgressRecord,
@@ -22,14 +23,15 @@ import {
 } from '../types';
 
 export const STORAGE_KEY = 'keyfort_td_save_data';
-export const CURRENT_SAVE_VERSION = 3;
+export const CURRENT_SAVE_VERSION = 4;
 
 const VALID_TOWERS = new Set<TowerType>(TOWER_ORDER);
+const VALID_HEROES = new Set<HeroId>(['guardian', 'engineer', 'ranger', 'arcanist']);
 const VALID_ACHIEVEMENTS = new Set<string>(ACHIEVEMENTS_DATA.map((a) => a.id));
 const VALID_COSMETICS = new Set<string>(COSMETICS_DATA.map((c) => c.id));
 const VALID_MISSIONS = new Set<string>(MISSIONS_DATA.map((m) => m.id));
 const VALID_MASTERY_STATUS = new Set<MasteryStatus>(['locked', 'learning', 'practicing', 'mastered']);
-const VALID_GAME_MODES = new Set<GameMode>(['campaign', 'survival', 'sandbox']);
+const VALID_GAME_MODES = new Set<GameMode>(['campaign', 'survival', 'sandbox', 'training', 'assessment', 'challenge']);
 const VALID_SESSION_STATUS = new Set<SessionCompletionStatus>([
   'completed',
   'victory',
@@ -671,6 +673,47 @@ export class PersistenceService {
         ? Math.floor(clampFinite(raw.bestQualifyingWpm, 0, 400, 0))
         : null;
 
+    const unlockedHeroes: HeroId[] = Array.isArray(raw.unlockedHeroes)
+      ? raw.unlockedHeroes.filter((h): h is HeroId => typeof h === 'string' && VALID_HEROES.has(h as HeroId))
+      : [];
+    const selectedHeroId: HeroId | null =
+      typeof raw.selectedHeroId === 'string' && VALID_HEROES.has(raw.selectedHeroId as HeroId)
+        ? (raw.selectedHeroId as HeroId)
+        : null;
+    const techPoints = Math.floor(clampFinite(raw.techPoints, 0, 500, 0));
+    const unlockedTechs: string[] = Array.isArray(raw.unlockedTechs)
+      ? raw.unlockedTechs.filter((t): t is string => typeof t === 'string' && t.length <= 40)
+      : [];
+    const completedChallenges: Record<string, { score: number; accuracy: number; timestamp: number }> = {};
+    if (isPlainObject(raw.completedChallenges)) {
+      for (const [cId, cVal] of Object.entries(raw.completedChallenges)) {
+        if (!RESERVED_OBJECT_KEYS.has(cId) && isPlainObject(cVal)) {
+          completedChallenges[cId] = {
+            score: Math.floor(clampFinite(cVal.score, 0, 10000000, 0)),
+            accuracy: clampFinite(cVal.accuracy, 0, 1, 0),
+            timestamp: Math.floor(clampFinite(cVal.timestamp, 0, Number.MAX_SAFE_INTEGER, Date.now())),
+          };
+        }
+      }
+    }
+    const standardizedTestRecords: NonNullable<PlayerProfile['standardizedTestRecords']> = [];
+    if (Array.isArray(raw.standardizedTestRecords)) {
+      for (const rec of raw.standardizedTestRecords.slice(0, 30)) {
+        if (isPlainObject(rec)) {
+          const dur = rec.durationSec === 30 || rec.durationSec === 60 || rec.durationSec === 120 ? rec.durationSec : 0;
+          standardizedTestRecords.push({
+            durationSec: dur,
+            pool: rec.pool === 'full' ? 'full' : 'beginner',
+            language: rec.language === 'en' ? 'en' : 'pl',
+            wpm: Math.floor(clampFinite(rec.wpm, 0, 350, 0)),
+            accuracy: clampFinite(rec.accuracy, 0, 1, 0),
+            consistency: Math.floor(clampFinite(rec.consistency, 0, 100, 0)),
+            timestamp: Math.floor(clampFinite(rec.timestamp, 0, Number.MAX_SAFE_INTEGER, Date.now())),
+          });
+        }
+      }
+    }
+
     return {
       ...def,
       createdAt: Math.floor(clampFinite(raw.createdAt, 0, Number.MAX_SAFE_INTEGER, def.createdAt)),
@@ -696,6 +739,17 @@ export class PersistenceService {
       sessionHistory,
       dailyStats,
       settings,
+      selectedHeroId,
+      unlockedHeroes,
+      techPoints,
+      unlockedTechs,
+      completedChallenges,
+      standardizedTestRecords,
+      skillAssessmentDone: Boolean(raw.skillAssessmentDone),
+      skillLevelChoice:
+        raw.skillLevelChoice === 'intermediate' || raw.skillLevelChoice === 'advanced'
+          ? raw.skillLevelChoice
+          : 'beginner',
     };
   }
 

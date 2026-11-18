@@ -1,9 +1,12 @@
+import { SvgArtwork } from '../../assets/SvgArtwork';
 import { MISSIONS_DATA } from '../../data/curriculumData';
 import { ENEMIES_DATA } from '../../data/enemiesData';
+import { HEROES_DATA } from '../../data/heroesData';
 import { TOWER_ORDER, TOWERS_DATA } from '../../data/towersData';
 import { LocalizationService } from '../../i18n/LocalizationService';
 import { GameSessionEngine } from '../../systems/GameSessionEngine';
 import { MissionOutcomeEvaluation } from '../../systems/ProgressionEngine';
+import { SynergySystem } from '../../systems/SynergySystem';
 import { TowerSystem } from '../../systems/TowerSystem';
 import {
   AchievementDefinition,
@@ -119,17 +122,17 @@ export class GameplayView {
       <div class="tactical-hud" data-testid="tactical-hud">
         <div class="hud-top-row">
           <div class="hud-stat hud-cell-lives" title="${escapeHtml(i18n.t('hud.lives'))}" data-testid="hud-lives">
-            <span>❤️</span>
+            ${SvgArtwork.resourceIcon('heart', 14)}
             <span style="color:#f43f5e;" id="hud-lives-value">${session.getLives()}/${session.getMaxLives()}</span>
           </div>
 
           <div class="hud-stat hud-cell-gold" title="${escapeHtml(i18n.t('hud.gold'))}" data-testid="hud-gold">
-            <span>🪙</span>
+            ${SvgArtwork.resourceIcon('gold', 14)}
             <span style="color:#facc15;" id="hud-gold-value">${economy.getGold()}</span>
           </div>
 
           <div class="energy-meter-wrap hud-cell-energy" data-testid="hud-energy" title="${escapeHtml(i18n.t('hud.energy'))}">
-            <span class="energy-num-slot">⚡ <strong id="hud-energy-value">${energyVal}</strong>/<span id="hud-energy-max">${energyMax}</span></span>
+            <span class="energy-num-slot">${SvgArtwork.resourceIcon('energy', 13)} <strong id="hud-energy-value">${energyVal}</strong>/<span id="hud-energy-max">${energyMax}</span></span>
             <div class="energy-bar-outer">
               <div class="energy-bar-inner" id="hud-energy-bar" style="width:${energyPct}%;"></div>
             </div>
@@ -139,7 +142,7 @@ export class GameplayView {
           </div>
 
           <div class="hud-stat hud-cell-wave" data-testid="hud-wave" title="${escapeHtml(i18n.t('hud.wave'))}">
-            <span>🌊</span>
+            ${SvgArtwork.resourceIcon('wave', 14)}
             <span id="hud-wave-value">${session.waveSystem.getCurrentWaveNumber()}/${totalWavesLabel}</span>
           </div>
 
@@ -292,16 +295,27 @@ export class GameplayView {
     const overCd = session.getAbilityCooldown('overdrive');
     const orbCd = session.getAbilityCooldown('orbital');
 
-    const TOWER_SHORT_META: Record<TowerType, { icon: string; shortPl: string; shortEn: string }> = {
-      gun: { icon: '🔫', shortPl: 'CKM', shortEn: 'Gun' },
-      cannon: { icon: '💣', shortPl: 'Działo', shortEn: 'Cannon' },
-      frost: { icon: '❄️', shortPl: 'Mróz', shortEn: 'Frost' },
-      tesla: { icon: '⚡', shortPl: 'Tesla', shortEn: 'Tesla' },
-      sniper: { icon: '🎯', shortPl: 'Snajper', shortEn: 'Sniper' },
-      reactor: { icon: '⚛️', shortPl: 'Reaktor', shortEn: 'Reactor' },
+    const TOWER_SHORT_META: Record<TowerType, { shortPl: string; shortEn: string }> = {
+      gun: { shortPl: 'CKM', shortEn: 'Gun' },
+      cannon: { shortPl: 'Działo', shortEn: 'Cannon' },
+      frost: { shortPl: 'Mróz', shortEn: 'Frost' },
+      reactor: { shortPl: 'Reaktor', shortEn: 'Reactor' },
+      flame: { shortPl: 'Ogień', shortEn: 'Flame' },
+      tesla: { shortPl: 'Tesla', shortEn: 'Tesla' },
+      drone: { shortPl: 'Drony', shortEn: 'Drone' },
+      command: { shortPl: 'Dowódca', shortEn: 'Command' },
+      sniper: { shortPl: 'Snajper', shortEn: 'Sniper' },
+      laser: { shortPl: 'Laser', shortEn: 'Laser' },
     };
 
-    const towerButtonsHtml = TOWER_ORDER.map((type) => {
+    const visibleTowers = TOWER_ORDER.filter((type) => {
+      if (session.mode !== 'campaign') return true;
+      const def = TOWERS_DATA[type];
+      // Show core 6 towers + any newly unlocked V2.0 towers or upcoming next-world tower
+      return def.unlockWorld <= session.mission.worldId + 1 || profile.unlockedTowers.includes(type);
+    });
+
+    const towerButtonsHtml = visibleTowers.map((type) => {
       const def = TOWERS_DATA[type];
       const meta = TOWER_SHORT_META[type];
       const isUnlocked = session.mode !== 'campaign' || profile.unlockedTowers.includes(type);
@@ -322,15 +336,15 @@ export class GameplayView {
           ${canBuild ? '' : 'disabled'}
           style="border-left: 3px solid ${def.color};"
         >
-          <div style="display:flex; align-items:center; gap:0.35rem; width:100%;">
-            <span style="font-size:1.15rem; flex-shrink:0;">${meta.icon}</span>
+          <div style="display:flex; align-items:center; gap:0.32rem; width:100%;">
+            <span style="display:inline-flex; flex-shrink:0;">${SvgArtwork.towerPortrait(type, 22)}</span>
             <div style="display:flex; flex-direction:column; min-width:0; flex:1;">
-              <div style="font-weight:800; font-size:0.75rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              <div style="font-weight:800; font-size:0.73rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                 ${escapeHtml(i18n.pick(meta.shortPl, meta.shortEn))}
               </div>
-              <div style="font-size:0.65rem; color:#facc15; font-weight:700;">${def.cost} 🪙</div>
+              <div style="font-size:0.64rem; color:#facc15; font-weight:700;">${def.cost} 🪙</div>
             </div>
-            ${!isUnlocked ? `<span style="font-size:0.6rem; color:#94a3b8; flex-shrink:0;">🔒Św.${def.unlockWorld}</span>` : ''}
+            ${!isUnlocked ? `<span style="font-size:0.58rem; color:#94a3b8; flex-shrink:0;">🔒Ś.${def.unlockWorld}</span>` : ''}
           </div>
         </button>
       `;
@@ -343,21 +357,39 @@ export class GameplayView {
       const sellValue = TowerSystem.getSellValue(selectedTower);
       const maxAllowedTier = session.mode === 'sandbox' ? 3 : profile.unlockedUpgradeTiers;
 
-      const priorities: TargetingPriority[] = ['first', 'last', 'strongest', 'nearest'];
+      const priorities: Array<{ id: TargetingPriority; labelPl: string; labelEn: string }> = [
+        { id: 'first', labelPl: '1-szy', labelEn: 'First' },
+        { id: 'last', labelPl: 'Ostat.', labelEn: 'Last' },
+        { id: 'strongest', labelPl: 'Silny', labelEn: 'Strong' },
+        { id: 'nearest', labelPl: 'Bliski', labelEn: 'Near' },
+      ];
       const priorityBtns = priorities
         .map(
           (p) => `
           <button
-            class="nav-btn ${selectedTower.targeting === p ? 'active' : ''}"
-            style="padding:0.18rem 0.35rem; font-size:0.68rem;"
-            data-target-priority="${p}"
-            data-testid="target-priority-${p}"
+            class="nav-btn ${selectedTower.targeting === p.id ? 'active' : ''}"
+            style="padding:0.16rem 0.24rem; font-size:0.64rem; text-align:center;"
+            data-target-priority="${p.id}"
+            data-testid="target-priority-${p.id}"
+            title="${escapeHtml(i18n.t(`tower.target.${p.id}`))}"
           >
-            ${i18n.t(`tower.target.${p}`)}
+            ${escapeHtml(i18n.pick(p.labelPl, p.labelEn))}
           </button>
         `
         )
         .join('');
+
+      const activeSynergies = SynergySystem.getActiveSynergiesForTower(selectedTower, session.getTowers());
+      const synergiesHtml =
+        activeSynergies.length > 0
+          ? `<div style="display:flex; flex-wrap:wrap; gap:0.2rem;">
+              ${activeSynergies
+                .map(
+                  (syn) => `<span class="key-obj-pill completed" style="border-color:${syn.color}; color:${syn.color}; font-size:0.62rem;" title="${escapeHtml(i18n.pick(syn.descPl, syn.descEn))}">✦ ${escapeHtml(i18n.pick(syn.namePl, syn.nameEn))}</span>`
+                )
+                .join('')}
+            </div>`
+          : '';
 
       const branches: UpgradeBranch[] = ['damage', 'speed', 'special'];
       const branchesHtml = branches
@@ -429,10 +461,21 @@ export class GameplayView {
             <div>🎯 <strong>${stats.range}</strong></div>
           </div>
 
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:0.2rem; flex-wrap:nowrap;">
-            <span style="font-size:0.68rem; color:#94a3b8;">${i18n.t('tower.targeting')}:</span>
-            <div style="display:flex; gap:0.16rem; flex-wrap:nowrap;">${priorityBtns}</div>
+          <div style="display:flex; flex-direction:column; gap:0.2rem;">
+            <span style="font-size:0.67rem; color:#94a3b8;">${i18n.t('tower.targeting')}:</span>
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.18rem;">${priorityBtns}</div>
           </div>
+
+          ${synergiesHtml}
+
+          <details style="font-size:0.66rem; color:#94a3b8; background:#090d16; padding:0.22rem 0.38rem; border-radius:5px;">
+            <summary style="cursor:pointer; font-weight:700;">📊 ${i18n.pick('Statystyki wieży', 'Tower Stats')}</summary>
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:0.2rem; margin-top:0.25rem; color:#e2e8f0;">
+              <div>⚔️ ${i18n.pick('Obr.', 'Dmg')}: <strong>${selectedTower.totalDamageDealt}</strong></div>
+              <div>💀 ${i18n.pick('Zab.', 'Kills')}: <strong>${selectedTower.kills}</strong></div>
+              <div>⚡ ${i18n.pick('En.', 'En')}: <strong>${(selectedTower.energyConsumed ?? 0).toFixed(1)}</strong></div>
+            </div>
+          </details>
 
           <div style="display:flex; flex-direction:column; gap:0.28rem;">
             ${branchesHtml}
@@ -483,9 +526,42 @@ export class GameplayView {
       `;
     }
 
+    const activeHero = session.getHero();
+    let heroPanelHtml = '';
+    if (activeHero) {
+      const hDef = HEROES_DATA[activeHero.id];
+      const cd0 = Math.ceil(activeHero.abilityCooldowns[0]);
+      const cd1 = Math.ceil(activeHero.abilityCooldowns[1]);
+      const can0 = !session.getIsPaused() && !session.isSessionOver() && cd0 === 0 && session.economy.getEnergy() >= hDef.abilities[0].energyCost;
+      const can1 = !session.getIsPaused() && !session.isSessionOver() && cd1 === 0 && session.economy.getEnergy() >= hDef.abilities[1].energyCost;
+      heroPanelHtml = `
+        <div class="sidebar-panel" style="padding:0.35rem 0.5rem; gap:0.25rem;" data-testid="hero-panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:0.3rem;">
+            <div style="display:flex; align-items:center; gap:0.35rem;">
+              ${SvgArtwork.heroPortrait(activeHero.id, 24)}
+              <div>
+                <div style="font-size:0.73rem; font-weight:800; color:${hDef.color};">${escapeHtml(i18n.pick(hDef.namePl, hDef.nameEn))}</div>
+                <div style="font-size:0.62rem; color:#94a3b8;">Lv ${activeHero.level} • ${activeHero.xp}/${activeHero.level * 120} XP</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+            <button class="ability-btn" data-hero-ability="0" data-testid="hero-ability-0" ${can0 ? '' : 'disabled'} title="${escapeHtml(i18n.pick(hDef.abilities[0].descPl, hDef.abilities[0].descEn))}">
+              <span class="ability-btn-label" style="font-size:0.65rem;">${escapeHtml(i18n.pick(hDef.abilities[0].namePl, hDef.abilities[0].nameEn))}</span>
+              <span class="ability-btn-meta">${cd0 > 0 ? `${cd0}s` : `${hDef.abilities[0].energyCost}⚡`}</span>
+            </button>
+            <button class="ability-btn" data-hero-ability="1" data-testid="hero-ability-1" ${can1 ? '' : 'disabled'} title="${escapeHtml(i18n.pick(hDef.abilities[1].descPl, hDef.abilities[1].descEn))}">
+              <span class="ability-btn-label" style="font-size:0.65rem;">${escapeHtml(i18n.pick(hDef.abilities[1].namePl, hDef.abilities[1].nameEn))}</span>
+              <span class="ability-btn-meta">${cd1 > 0 ? `${cd1}s` : `${hDef.abilities[1].energyCost}⚡`}</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div class="sidebar-panel" style="padding:0.42rem 0.55rem; gap:0.35rem;">
-        <div class="hud-controls" style="display:grid; grid-template-columns:minmax(0,1fr) 46px 72px; gap:4px; height:26px;">
+        <div class="hud-controls" style="display:grid; grid-template-columns:minmax(0,1fr) 54px; gap:4px; height:26px;">
           <button
             class="wave-start-btn"
             id="hud-start-wave-btn"
@@ -498,9 +574,6 @@ export class GameplayView {
           </button>
           <button class="nav-btn hud-fixed-speed-btn" id="hud-speed-btn" data-action="cycle-speed" data-testid="speed-btn" title="${escapeHtml(i18n.t('hud.speed'))}">
             ${session.getGameSpeed()}x
-          </button>
-          <button class="nav-btn hud-fixed-pause-btn" id="hud-pause-btn" data-action="toggle-pause" data-testid="pause-btn">
-            ${session.getIsPaused() ? `▶ ${i18n.t('hud.resume')}` : `⏸ ${i18n.t('hud.pause')}`}
           </button>
         </div>
 
@@ -541,10 +614,12 @@ export class GameplayView {
         </div>
       </div>
 
+      ${heroPanelHtml}
+
       <div class="sidebar-panel" data-testid="tower-build-panel" style="padding:0.42rem 0.55rem; gap:0.32rem;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h3 style="border:none; padding:0; font-size:0.8rem;">🏗️ ${i18n.t('tower.buildTitle')}</h3>
-          <select id="pad-selector-dropdown" data-testid="pad-selector-dropdown" style="background:#090d16; border:1px solid #38bdf8; border-radius:5px; padding:0.12rem 0.3rem; font-size:0.7rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.3rem;">
+          <h3 style="border:none; padding:0; font-size:0.78rem; white-space:nowrap;">🏗️ ${i18n.pick('Wieże', 'Towers')}</h3>
+          <select id="pad-selector-dropdown" data-testid="pad-selector-dropdown" style="background:#090d16; border:1px solid #38bdf8; border-radius:5px; padding:0.12rem 0.3rem; font-size:0.68rem; max-width:170px; text-overflow:ellipsis;">
             ${session.map.pads
               .map((pad) => {
                 const occ = session.getTowers().find((t) => t.padIndex === pad.index);

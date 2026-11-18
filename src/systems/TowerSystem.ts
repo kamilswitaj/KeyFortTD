@@ -65,6 +65,7 @@ export class TowerSystem {
       consecutiveHitsOnTarget: 0,
       totalDamageDealt: 0,
       kills: 0,
+      energyConsumed: 0,
       muzzleFlashTimer: 0,
     };
   }
@@ -192,14 +193,24 @@ export class TowerSystem {
   public static computeEffectiveStats(tower: ActiveTower, allTowers: ActiveTower[]): ComputedTowerStats {
     const base = TowerSystem.computeBaseAndUpgradeStats(tower);
     let totalAuraDamageBonus = 0;
+    let bestCommandAura = 0;
+    let hasNearbyReactor = false;
+    let hasNearbyCommand = false;
 
     for (const other of allTowers) {
       if (other.id === tower.id) continue;
       const otherStats = TowerSystem.computeBaseAndUpgradeStats(other);
       const dist = Math.hypot(other.x - tower.x, other.y - tower.y);
       if (dist <= otherStats.range + 15) {
-        if (otherStats.auraDamageBuff > 0) {
+        if (other.type === 'command') {
+          hasNearbyCommand = true;
+          const cmdAura = Math.max(0.15, otherStats.auraDamageBuff);
+          bestCommandAura = Math.max(bestCommandAura, cmdAura);
+        } else if (otherStats.auraDamageBuff > 0) {
           totalAuraDamageBonus += otherStats.auraDamageBuff;
+        }
+        if (other.type === 'reactor') {
+          hasNearbyReactor = true;
         }
         if (otherStats.grantNearbyGhostDetection) {
           base.detectsGhosts = true;
@@ -207,9 +218,21 @@ export class TowerSystem {
       }
     }
 
-    if (totalAuraDamageBonus > 0) {
-      base.damage = Math.round(base.damage * (1 + Math.min(0.85, totalAuraDamageBonus)));
+    // Command aura is non-stacking; total aura damage bonus is strictly capped at +85%
+    const combinedAura = Math.min(0.85, totalAuraDamageBonus + bestCommandAura);
+    if (combinedAura > 0) {
+      base.damage = Math.round(base.damage * (1 + combinedAura));
     }
+
+    // Deterministic tower synergies
+    if (tower.type === 'tesla' && hasNearbyReactor) {
+      base.chainCount += 1;
+      base.energyPerShot = Number((base.energyPerShot * 0.82).toFixed(2));
+    }
+    if (tower.type === 'drone' && hasNearbyCommand) {
+      base.fireRate = Number((base.fireRate * 1.18).toFixed(2));
+    }
+
     return base;
   }
 
@@ -223,6 +246,9 @@ export class TowerSystem {
   ): ActiveEnemy | null {
     const candidates = enemies.filter((enemy) => {
       if (enemy.hp <= 0) return false;
+      if (enemy.isFlying && (tower.type === 'cannon' || tower.type === 'flame')) {
+        return false;
+      }
       if (enemy.isGhost && !enemy.isRevealed && !stats.detectsGhosts) {
         return false;
       }

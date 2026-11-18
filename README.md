@@ -74,3 +74,14 @@ Profiles and progress are stored in the current browser's localStorage (per orig
 Mission rankings use recorded difficulty-specific results; older records with unknown difficulty remain in personal progress, not competitive leaderboards. Historical mastery is unavailable when no daily snapshot exists. Daily charts cover the retained history, not invented lifetime values.
 
 Production UI smoke test: after `npm run build`, set `E2E_PROD=1` and run `npm run test:e2e -- production.spec.ts`. The production application does not expose the development test hook.
+
+
+## V2.0 Highlights
+
+- **Visual Design System & Battlefield Upgrade**: Custom inline SVG portraits and emblems (`src/assets/SvgArtwork.ts`), HiDPI offscreen-cached terrain per world, animated portals, KeyFort citadel, floating combat text, particles, and controlled screen shake (`src/systems/RenderEffectSystem.ts`).
+- **10 Towers & Deterministic Synergies (`src/systems/SynergySystem.ts`)**: Classic 6 towers plus Flame Tower, Drone Hangar, Command Tower (non-stacking aura), and Laser Tower, with 5 deterministic tower synergies (Shatter Blast, Overvolted Grid, Thermal Shock, Marked Precision, Squadron Link).
+- **4 Heroes (`src/systems/HeroSystem.ts`, `src/data/heroesData.ts`)**: The Guardian, The Engineer, The Ranger, and The Arcanist with passive bonuses, leveling, and two energy-powered active abilities each.
+- **12 Enemy Archetypes & 8 World Bosses**: Added Armored Elite, Evasive Skirmisher, Flying Hover Striker (anti-air targeting rules), and Field Catalyst alongside multi-phase world bosses.
+- **Training Academy & Standardized Typing Tests (`src/systems/TrainingAcademyEngine.ts`)**: Dedicated drills (weak keys, bigrams, Polish diacritics, Shift uppercase, themed words, sentences, relaxed practice) and fair 30s/60s/120s/Untimed family standardized tests.
+- **Interactive 8-World Map & Daily/Weekly Challenges (`src/systems/ChallengeEngine.ts`)**: Connected SVG campaign world map with light narrative, deterministic curriculum-tiered challenges, and 5-branch Technology Specializations.
+- **Save Schema V4 (`src/services/PersistenceService.ts`)**: Deterministic migration preserving V0–V3 saves, storage conflict detection, and interrupted-session protection.

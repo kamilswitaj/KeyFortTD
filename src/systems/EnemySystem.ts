@@ -72,6 +72,10 @@ export class EnemySystem {
       brittleTimer: 0,
       spotterBonus: 0,
       spotterTimer: 0,
+      isFlying: Boolean(def.isFlying),
+      hitFlashTimer: 0,
+      thermalShockCooldown: 0,
+      evadeTimer: 0,
     };
   }
 
@@ -137,6 +141,12 @@ export class EnemySystem {
     if (enemy.spotterTimer > 0) {
       enemy.spotterTimer = Math.max(0, enemy.spotterTimer - dtSec);
       if (enemy.spotterTimer === 0) enemy.spotterBonus = 0;
+    }
+    if (enemy.hitFlashTimer && enemy.hitFlashTimer > 0) {
+      enemy.hitFlashTimer = Math.max(0, enemy.hitFlashTimer - dtSec);
+    }
+    if (enemy.thermalShockCooldown && enemy.thermalShockCooldown > 0) {
+      enemy.thermalShockCooldown = Math.max(0, enemy.thermalShockCooldown - dtSec);
     }
 
     // Multi-phase Boss mechanics

@@ -27,23 +27,23 @@ export class OnboardingView {
       if (towers.length === 0) {
         stepBadge = i18n.pick('KROK 1/4: BUDOWA', 'STEP 1/4: BUILD');
         messagePl =
-          'Kliknij „Wieża Strzelecka (90 🪙)” w panelu po prawej stronie, aby rozstawić pierwszą wieżę przy zakręcie drogi.';
+          'Kliknij „CKM 90 🪙” w panelu po prawej, aby postawić pierwszą wieżę przy zakręcie.';
         messageEn =
-          'Click "Gun Tower (90 🪙)" in the right panel to place your first defense turret near the road bend.';
+          'Click "Gun 90 🪙" on the right panel to place your first turret near the road bend.';
         accentColor = '#facc15';
       } else if (typedCorrect < 6) {
-        stepBadge = i18n.pick('KROK 2/4: POZYCJA F i J', 'STEP 2/4: F & J ANCHORS');
+        stepBadge = i18n.pick('KROK 2/4: POZYCJA F i J', 'STEP 2/4: F & J');
         messagePl =
-          'Połóż lewy palec wskazujący na klawiszu F, a prawy na J (poczuj małe wypustki!). Wpisz podświetlone znaki poniżej — każdy znak ładuje Energię (⚡) wież!';
+          'Palce wskazujące na F i J (poczuj wypustki!). Wpisz podświetlone znaki — ładują Energię (⚡)!';
         messageEn =
-          'Rest your left index finger on F and right index on J (feel the tactile bumps!). Type the highlighted keys below — each key charges Tower Energy (⚡)!';
+          'Index fingers on F & J (feel the bumps!). Type the highlighted keys — each charges Energy (⚡)!';
         accentColor = '#4ade80';
       } else if (!waveActive && waveNum === 1 && session.getEnemiesDefeatedCount() === 0) {
         stepBadge = i18n.pick('KROK 3/4: START FALI', 'STEP 3/4: START WAVE');
         messagePl =
-          'Sprawdź pasek nadchodzących wrogów powyżej i kliknij zielony przycisk „▶ Rozpocznij Falę”, a podczas walki pisz spokojnie dalej!';
+          'Kliknij zielony przycisk „▶ Start Fali” po prawej, a podczas walki pisz spokojnie dalej!';
         messageEn =
-          'Check the incoming enemy preview above and click the green "▶ Start Wave" button, then keep typing calmly during battle!';
+          'Click the green "▶ Start Wave" button on the right, then keep typing calmly during battle!';
         accentColor = '#22c55e';
       } else if (!hasUpgraded && session.economy.getGold() >= 60) {
         stepBadge = i18n.pick('KROK 4/4: ULEPSZENIE', 'STEP 4/4: UPGRADE');
