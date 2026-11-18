@@ -161,7 +161,7 @@ export class FamilyDashboardView {
               return `
                 <tr data-testid="leaderboard-row-${escapeHtml(entry.profileId)}">
                   <td>
-                    ${entry.isFamilyRecord ? '👑 <strong>#1 Rekord Rodziny</strong>' : `#${idx + 1}`}
+                    ${entry.isFamilyRecord ? `👑 <strong>${i18n.pick('#1 Rekord rodziny', '#1 Family record')}</strong>` : state.leaderboardDifficulty === 'all' ? '—' : `#${idx + 1}`}
                   </td>
                   <td>
                     <span class="vk-dot" style="background:${pColor};"></span>
@@ -363,8 +363,8 @@ export class FamilyDashboardView {
       },
       {
         id: 'campaign_prog',
-        titlePl: 'Postęp kampanii (ukończone misje)',
-        titleEn: 'Campaign Progression (Missions)',
+        titlePl: 'Zaliczenia misji (z zachowanej historii)',
+        titleEn: 'Mission completions (retained history)',
         unit: '',
         getValue: (pt) => pt.missionsCompletedCumulative,
       },
@@ -442,8 +442,11 @@ export class FamilyDashboardView {
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;
 
+    const dayTime = (date: string) => Date.parse(date + 'T00:00:00Z');
+    const startTime = dayTime(dates[0]);
+    const endTime = dayTime(dates[dates.length - 1]);
     const xForIndex = (idx: number) =>
-      dates.length === 1 ? padL + plotW / 2 : padL + (idx / (dates.length - 1)) * plotW;
+      endTime === startTime ? padL + plotW / 2 : padL + ((dayTime(dates[idx]) - startTime) / (endTime - startTime)) * plotW;
     const yForValue = (val: number) => padT + plotH - (Math.min(maxVal, Math.max(0, val)) / maxVal) * plotH;
 
     let seriesPathsHtml = '';

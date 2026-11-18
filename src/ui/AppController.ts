@@ -95,12 +95,7 @@ export class AppController {
     const initialProfile = this.persistence.getActiveProfile();
     this.i18n = new LocalizationService(initialProfile.settings.language);
     this.audio = new AudioSystem();
-    this.persistence.setOnExternalSync(() => {
-      this.applyActiveProfileSettings();
-      if (this.currentScreen !== 'gameplay') {
-        this.renderCurrentScreen();
-      }
-    });
+    this.persistence.setOnStorageError(() => this.updateStorageWarning());
     this.applyActiveProfileSettings();
     this.ensureFamilyComparisonSelection();
 
@@ -159,8 +154,8 @@ export class AppController {
 
   public navigateTo(screen: ScreenId): void {
     if (this.currentScreen === 'gameplay' && screen !== 'gameplay' && this.activeSession) {
-      if (!this.activeSession.isSessionOver() && !this.activeSession.isFinalized()) {
-        this.finalizeSession(this.activeSession, 'abandoned');
+      if (!this.activeSession.isFinalized()) {
+        this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
       }
       this.stopGameLoop();
       this.activeSession = null;
@@ -191,8 +186,8 @@ export class AppController {
     }
 
     // Finalize any previous unfinished session before starting a new one
-    if (this.activeSession && !this.activeSession.isSessionOver() && !this.activeSession.isFinalized()) {
-      this.finalizeSession(this.activeSession, 'abandoned');
+    if (this.activeSession && !this.activeSession.isFinalized()) {
+      this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
     }
 
     this.persistence.flushSave();
@@ -338,8 +333,8 @@ export class AppController {
       return;
     }
 
-    const ownerProfile =
-      this.persistence.getProfileById(session.ownerProfileId) ?? session.getOwnerProfile();
+    const ownerProfile = this.persistence.getProfileById(session.ownerProfileId);
+    if (!ownerProfile) return;
     const typing = session.typingEngine;
     const durationSec = typing.getActiveDurationSec();
     const charsTyped = typing.getTotalCorrect();
@@ -353,7 +348,7 @@ export class AppController {
     if (attempts > 0) {
       ownerProfile.bestCombo = Math.max(ownerProfile.bestCombo, typing.getMaxCombo());
       ownerProfile.bestWpm = Math.max(ownerProfile.bestWpm, typing.getWpm());
-      const qWpm = StatisticsEngine.computeQualifyingWpm(charsTyped, durationSec);
+      const qWpm = session.isUnrestrictedResources() ? null : StatisticsEngine.computeQualifyingWpm(charsTyped, durationSec);
       if (qWpm !== null) {
         ownerProfile.bestQualifyingWpm =
           ownerProfile.bestQualifyingWpm !== null && ownerProfile.bestQualifyingWpm !== undefined
@@ -401,7 +396,7 @@ export class AppController {
         });
       } else if (session.mode === 'survival') {
         status = 'defeat';
-        const waveReached = session.waveSystem.getCurrentWaveNumber();
+        const waveReached = session.waveSystem.getCompletedWavesCount();
         if (!session.isUnrestrictedResources()) {
           ownerProfile.survivalBestWave = Math.max(ownerProfile.survivalBestWave, waveReached);
           ownerProfile.survivalBestScore = Math.max(ownerProfile.survivalBestScore, session.getScore());
@@ -419,10 +414,11 @@ export class AppController {
       reason === 'completed' || attempts > 0 || wavesCompleted > 0;
 
     if (shouldRecordHistory) {
-      const qualifyingWpm = StatisticsEngine.computeQualifyingWpm(charsTyped, durationSec);
+      const qualifyingWpm = session.isUnrestrictedResources() ? null : StatisticsEngine.computeQualifyingWpm(charsTyped, durationSec);
       const historyEntry: SessionHistoryEntry = {
         sessionId: session.sessionId,
         profileId: ownerProfile.id,
+        unrestrictedResources: session.isUnrestrictedResources(),
         timestamp: Date.now(),
         missionId: session.sourceMissionId,
         mode: session.mode,
@@ -465,6 +461,7 @@ export class AppController {
    * If an unfinished mission is currently running, prompts the user for confirmation first.
    */
   public requestProfileSwitch(targetProfileId: string, startPlayAfterSwitch: boolean = false): void {
+    if (!this.persistence.getProfileById(targetProfileId)) return;
     const currentProfile = this.persistence.getActiveProfile();
     if (targetProfileId === currentProfile.id && !startPlayAfterSwitch) {
       return;
@@ -479,8 +476,8 @@ export class AppController {
   }
 
   private executeProfileSwitch(targetProfileId: string, startPlayAfterSwitch: boolean = false): void {
-    if (this.activeSession && !this.activeSession.isSessionOver() && !this.activeSession.isFinalized()) {
-      this.finalizeSession(this.activeSession, 'abandoned');
+    if (this.activeSession && !this.activeSession.isFinalized()) {
+      this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
     }
     this.stopGameLoop();
     this.activeSession = null;
@@ -501,7 +498,11 @@ export class AppController {
   private renderSwitchProfileConfirmModal(targetProfileId: string, startPlayAfterSwitch: boolean): void {
     const modalContainer = document.getElementById('modal-container');
     const targetProfile = this.persistence.getProfileById(targetProfileId);
-    if (!modalContainer || !targetProfile) return;
+    if (!modalContainer || !targetProfile || !this.activeSession) return;
+    const session = this.activeSession;
+    const wasPaused = session.getIsPaused();
+    session.setPaused(true);
+    this.updateGameplayHudInPlace();
 
     modalContainer.innerHTML = `
       <div class="modal-overlay" data-testid="switch-profile-confirm-modal">
@@ -531,7 +532,14 @@ export class AppController {
       modalContainer.innerHTML = '';
       // Sync header select back to active profile
       const headerSel = document.getElementById('header-profile-switcher') as HTMLSelectElement | null;
-      if (headerSel) headerSel.value = this.persistence.getActiveProfile().id;
+      if (headerSel) {
+        headerSel.value = this.persistence.getActiveProfile().id;
+        headerSel.blur();
+      }
+      if (this.activeSession === session) {
+        session.setPaused(wasPaused);
+        this.updateGameplayHudInPlace();
+      }
     });
 
     modalContainer.querySelector('[data-action="confirm-switch-profile"]')?.addEventListener('click', () => {
@@ -630,6 +638,20 @@ export class AppController {
   }
 
   private bindGlobalKeyboardAndFocus(): void {
+    // Reload/close must retain practice just like explicitly leaving a mission.
+    window.addEventListener('pagehide', () => {
+      const session = this.activeSession;
+      if (session && !session.isFinalized()) {
+        this.finalizeSession(session, session.isSessionOver() ? 'completed' : 'abandoned');
+      }
+      this.stopGameLoop();
+      this.activeSession = null;
+      if (this.currentScreen === 'gameplay') this.currentScreen = 'main_menu';
+      this.persistence.flushSave();
+    });
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) this.renderCurrentScreen();
+    });
     window.addEventListener('blur', () => {
       if (this.activeSession) {
         this.activeSession.typingEngine.markIdleBreak();
@@ -657,6 +679,7 @@ export class AppController {
 
     window.addEventListener('keydown', (e: KeyboardEvent) => {
       if (this.currentScreen !== 'gameplay' || !this.activeSession) return;
+      if (this.container.querySelector('[data-testid="switch-profile-confirm-modal"]')) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
         return;
@@ -729,13 +752,7 @@ export class AppController {
       document.body.classList.toggle('in-gameplay', this.currentScreen === 'gameplay');
     }
 
-    const storageErr = this.persistence.getLastStorageError();
-    const storageBannerHtml = storageErr
-      ? `<div class="storage-warning-banner" data-testid="storage-warning-banner">
-          <span>⚠️ ${escapeHtml(storageErr)}</span>
-          <button class="nav-btn" data-action="dismiss-storage-err">✕</button>
-        </div>`
-      : '';
+    const storageBannerHtml = '<div id="storage-warning-slot"></div>';
 
     this.container.innerHTML = `
       <div class="app-shell ${this.currentScreen === 'gameplay' ? 'app-shell-gameplay' : ''}" data-screen="${this.currentScreen}">
@@ -749,6 +766,28 @@ export class AppController {
     `;
 
     this.attachScreenListeners();
+    this.updateStorageWarning();
+  }
+
+  private updateStorageWarning(): void {
+    const slot = this.container.querySelector('#storage-warning-slot');
+    if (!slot) return;
+    const error = this.persistence.getLastStorageError();
+    if (!error && !slot.hasChildNodes()) return;
+    if (error && slot.getAttribute('data-error') === error) return;
+    slot.setAttribute('data-error', error ?? '');
+    slot.innerHTML = error ? `<div class="storage-warning-banner" role="alert" data-testid="storage-warning-banner">
+      <span>⚠️ ${escapeHtml(error)}</span>
+      <button class="nav-btn" data-action="backup-storage">${this.i18n.pick('Eksportuj kopię', 'Export backup')}</button>
+    </div>` : '';
+    slot.querySelector('[data-action="backup-storage"]')?.addEventListener('click', () => {
+      const url = URL.createObjectURL(new Blob([this.persistence.exportSaveJson()], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'keyfort-backup.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
   }
 
   private renderGameplayHeaderHtml(): string {
@@ -1020,7 +1059,7 @@ export class AppController {
       orbDisabled: !session.canUseAbility('orbital'),
       orbMeta: orbCd > 0 ? `${orbCd}s` : '65⚡',
       combo: `${typing.getCombo()}`,
-      accuracy: `${Math.round(typing.getAccuracy() * 100)}%`,
+      accuracy: typing.getTotalAttempts() > 0 ? `${Math.round(typing.getAccuracy() * 100)}%` : '—',
       wpm: `${typing.getWpm()}`,
     };
 
@@ -1356,11 +1395,6 @@ export class AppController {
   }
 
   private attachScreenListeners(): void {
-    this.container.querySelector('[data-action="dismiss-storage-err"]')?.addEventListener('click', () => {
-      this.persistence.clearStorageError();
-      this.renderCurrentScreen();
-    });
-
     this.container.querySelector('[data-action="go-menu"]')?.addEventListener('click', () => {
       this.navigateTo('main_menu');
     });
@@ -1443,8 +1477,8 @@ export class AppController {
       this.container.querySelectorAll('[data-action="exit-gameplay"]').forEach((btn) => {
         btn.addEventListener('click', () => {
           if (this.activeSession) {
-            if (!this.activeSession.isSessionOver() && !this.activeSession.isFinalized()) {
-              this.finalizeSession(this.activeSession, 'abandoned');
+            if (!this.activeSession.isFinalized()) {
+              this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
             }
             this.stopGameLoop();
             this.activeSession = null;

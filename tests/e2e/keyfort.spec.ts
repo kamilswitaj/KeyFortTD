@@ -478,6 +478,10 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     // Select Natalka in the header switcher -> must open confirmation modal!
     await page.getByTestId('header-profile-switcher').selectOption(natalkaId);
     await expect(page.getByTestId('switch-profile-confirm-modal')).toBeVisible();
+    expect(await page.evaluate(() => window.__keyfortApp!.getActiveSession()!.getIsPaused())).toBe(true);
+    const attemptsBeforeModal = await page.evaluate(() => window.__keyfortApp!.getActiveSession()!.typingEngine.getTotalAttempts());
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f' })));
+    expect(await page.evaluate(() => window.__keyfortApp!.getActiveSession()!.typingEngine.getTotalAttempts())).toBe(attemptsBeforeModal);
 
     // Cancel first -> stays in mission as Kondziu
     await page.getByTestId('cancel-switch-profile-btn').click();
@@ -558,6 +562,23 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     expect(retryMissionId).toBe('w2_m2');
   });
 
+  test('reload records interrupted practice exactly once', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('quick-start-campaign-btn').click();
+    for (let i = 0; i < 8; i++) {
+      const ch = await page.getByTestId('console-sequence-box').getAttribute('data-expected-char');
+      if (ch) await page.keyboard.press(ch === ' ' ? 'Space' : ch);
+    }
+    await page.reload();
+    const history = () => page.evaluate(() => window.__keyfortApp!.persistence.getActiveProfile().sessionHistory);
+    await expect(page.getByTestId('main-menu-screen')).toBeVisible();
+    expect((await history()).length).toBe(1);
+    expect((await history())[0].status).toBe('abandoned');
+    expect((await history())[0].charsTyped).toBe(8);
+    await page.reload();
+    expect((await history()).length).toBe(1);
+  });
+
   test('dedicated viewport-aware fullscreen gameplay layout eliminates document scroll, fits battlefield, prompt and full keyboard simultaneously, and provides header controls', async ({
     page,
   }) => {
@@ -619,9 +640,13 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
 
       // In-game fullscreen toggle button and header pause
       await page.getByTestId('toggle-fullscreen-btn').click();
+      await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
       await page.getByTestId('gameplay-header-pause-btn').click();
       await expect(page.locator('#gameplay-header-status')).toContainText('WSTRZYMANA');
       await page.getByTestId('gameplay-header-pause-btn').click();
+      // Restore normal window state before the next viewport resize.
+      await page.getByTestId('toggle-fullscreen-btn').click();
+      await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(false);
     }
 
     // Exit gameplay via header exit button returns to campaign map

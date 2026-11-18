@@ -19,3 +19,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Verify production bundle through public UI
+        run: npm run test:e2e -- production.spec.ts
+        env:
+          E2E_PROD: '1'

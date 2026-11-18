@@ -152,7 +152,7 @@ export class GameplayView {
 
           <div class="hud-stat hud-mini-stat" data-testid="hud-accuracy" title="${escapeHtml(i18n.t('hud.accuracy'))}">
             <span>🎯</span>
-            <span id="hud-accuracy-value">${Math.round(typing.getAccuracy() * 100)}%</span>
+            <span id="hud-accuracy-value">${typing.getTotalAttempts() > 0 ? `${Math.round(typing.getAccuracy() * 100)}%` : '—'}</span>
           </div>
 
           <div class="hud-stat hud-mini-stat" data-testid="hud-combo" title="${escapeHtml(i18n.t('hud.combo'))}">
