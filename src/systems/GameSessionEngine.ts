@@ -140,7 +140,7 @@ export class GameSessionEngine {
     this.maxLives = config.mission.startingLives;
 
     const chosenHeroId = config.profile.selectedHeroId ?? null;
-    if (chosenHeroId && (config.mode !== 'campaign' || config.mission.globalIndex >= 4)) {
+    if (chosenHeroId && (config.mode === 'sandbox' || (config.profile.unlockedHeroes ?? []).includes(chosenHeroId)) && (config.mode !== 'campaign' || config.mission.globalIndex >= 4)) {
       const endWp = this.map.waypoints[this.map.waypoints.length - 1] ?? { x: 820, y: 200 };
       const anchor = {
         x: Math.max(80, Math.min(860, endWp.x - 95)),

@@ -601,6 +601,7 @@ export interface PlayerProfile {
   unlockedTechs?: string[];
   completedChallenges?: Record<string, { score: number; accuracy: number; timestamp: number }>;
   standardizedTestRecords?: Array<{
+    rulesVersion?: number;
     durationSec: 30 | 60 | 120 | 0;
     pool: 'beginner' | 'full';
     language: Language;

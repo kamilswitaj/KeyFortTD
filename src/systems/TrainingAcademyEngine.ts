@@ -1,5 +1,6 @@
 import { MISSIONS_DATA } from '../data/curriculumData';
-import { Language, PlayerProfile, TypingPromptItem } from '../types';
+import { Language, PlayerProfile, SessionHistoryEntry, TypingPromptItem } from '../types';
+import { StatisticsEngine } from './StatisticsEngine';
 import { AdaptiveLearningEngine } from './AdaptiveLearningEngine';
 import { TypingEngine } from './TypingEngine';
 
@@ -101,7 +102,7 @@ const STANDARDIZED_POOLS: Record<'beginner' | 'full', Record<Language, string[]>
     pl: [
       'f j f j d k d k s l s l a j f k d l s a',
       'las jak dal skala falka sada laska fala',
-      'ala ma psa ola ma kota tata da lasa',
+      'ala da las ja daj skala fala dada',
       'kasa fala lada sala klasa skala daj',
     ],
     en: [
@@ -127,6 +128,16 @@ const STANDARDIZED_POOLS: Record<'beginner' | 'full', Record<Language, string[]>
   },
 };
 
+export const STANDARDIZED_RULES_VERSION = 1;
+export interface AcademyResult {
+  wpm: number;
+  accuracy: number;
+  correct: number;
+  errors: number;
+  consistency: number;
+  qualified: boolean;
+}
+
 export class TrainingAcademyEngine {
   public readonly mode: 'training' | 'assessment';
   public readonly activityKind: TrainingActivityKind;
@@ -136,6 +147,8 @@ export class TrainingAcademyEngine {
   public elapsedSec: number = 0;
   public started: boolean = false;
   public completed: boolean = false;
+  public readonly ownerProfileId: string;
+  private finalizedResult: AcademyResult | null = null;
   private profile: PlayerProfile;
   private language: Language;
   private allowedKeys: string[];
@@ -149,6 +162,7 @@ export class TrainingAcademyEngine {
     language?: Language;
   }) {
     this.profile = options.profile;
+    this.ownerProfileId = options.profile.id;
     this.mode = options.mode;
     this.activityKind = options.activityKind ?? 'weak_keys';
     this.durationSec = options.durationSec ?? 0;
@@ -163,7 +177,7 @@ export class TrainingAcademyEngine {
   private resolveAllowedKeys(): string[] {
     if (this.mode === 'assessment') {
       return this.pool === 'beginner'
-        ? ['f', 'j', 'd', 'k', 's', 'l', 'a', ';', ' ']
+        ? ['f', 'j', 'd', 'k', 's', 'l', 'a', 'g', 'h', ';', ' ']
         : MISSIONS_DATA[MISSIONS_DATA.length - 1].allowedKeys;
     }
 
@@ -222,7 +236,6 @@ export class TrainingAcademyEngine {
 
   public handleKey(key: string, now: number = Date.now(), isRepeat: boolean = false) {
     if (this.completed) return null;
-    if (!this.started) this.started = true;
     const res = this.typingEngine.processKeyInput(
       key,
       this.profile.characterMastery,
@@ -231,6 +244,7 @@ export class TrainingAcademyEngine {
       now,
       isRepeat
     );
+    if (!res.ignored) this.started = true;
     if (this.typingEngine.getRemainingQueueLength() < 3) {
       const more = this.buildInitialPrompts(this.allowedKeys);
       this.typingEngine.appendPrompts(more);
@@ -240,7 +254,8 @@ export class TrainingAcademyEngine {
 
   public tick(dtSec: number): boolean {
     if (!this.started || this.completed) return false;
-    this.elapsedSec += dtSec;
+    if (!Number.isFinite(dtSec) || dtSec <= 0) return false;
+    this.elapsedSec = this.durationSec > 0 ? Math.min(this.durationSec, this.elapsedSec + dtSec) : this.elapsedSec + dtSec;
     if (this.durationSec > 0 && this.elapsedSec >= this.durationSec) {
       this.completed = true;
       return true;
@@ -248,30 +263,51 @@ export class TrainingAcademyEngine {
     return false;
   }
 
-  public finishAndRecord(): {
-    wpm: number;
-    accuracy: number;
-    correct: number;
-    errors: number;
-    consistency: number;
-  } {
+  public finishAndRecord(abandoned = false): AcademyResult {
+    if (this.finalizedResult) return this.finalizedResult;
     this.completed = true;
-    const wpm = this.typingEngine.getWpm();
-    const accuracy = this.typingEngine.getAccuracy();
     const correct = this.typingEngine.getTotalCorrect();
     const errors = this.typingEngine.getTotalErrors();
+    const duration = this.typingEngine.getActiveDurationSec();
+    const accuracy = correct + errors > 0 ? correct / (correct + errors) : 0;
+    const isTimedAssessment = this.mode === 'assessment' && this.durationSec > 0;
+    const finishedTimedTest = isTimedAssessment && !abandoned && this.elapsedSec >= this.durationSec;
+    const qualified = finishedTimedTest && correct >= 20;
+    // Timed assessment is measured over the whole allotted time, not typing bursts.
+    const wpm = isTimedAssessment
+      ? StatisticsEngine.computeWeightedWpm(correct, finishedTimedTest ? this.durationSec : this.elapsedSec)
+      : this.typingEngine.getWpm();
     const consistency = Math.max(0, Math.min(100, Math.round(accuracy * 100 - Math.min(15, errors * 0.8))));
-
-    // Record legitimate typing practice onto profile
-    this.profile.totalCharsTyped += this.typingEngine.getTotalAttempts();
-    this.profile.totalCorrectChars += correct;
-    this.profile.totalPracticeTimeSec += Math.round(Math.max(5, this.elapsedSec));
-
-    if (this.mode === 'assessment' && correct >= 15) {
-      if (!this.profile.standardizedTestRecords) {
-        this.profile.standardizedTestRecords = [];
-      }
+    this.finalizedResult = { wpm, accuracy, correct, errors, consistency, qualified };
+    if (correct + errors > 0) {
+      const entry: SessionHistoryEntry = {
+        profileId: this.ownerProfileId,
+        timestamp: Date.now(),
+        missionId: this.mode === 'assessment' ? 'academy_assessment' : 'academy_' + this.activityKind,
+        mode: this.mode,
+        difficulty: this.profile.settings.difficulty,
+        status: abandoned || (isTimedAssessment && !finishedTimedTest) ? 'abandoned' : 'completed',
+        wpm: this.typingEngine.getWpm(),
+        qualifyingWpm: null,
+        accuracy,
+        durationSec: duration,
+        charsTyped: correct,
+        errors,
+        maxCombo: this.typingEngine.getMaxCombo(),
+      };
+      this.profile.totalCharsTyped += correct + errors;
+      this.profile.totalCorrectChars += correct;
+      this.profile.totalPracticeTimeSec += duration;
+      this.profile.lastActiveAt = entry.timestamp;
+      this.profile.bestCombo = Math.max(this.profile.bestCombo, entry.maxCombo);
+      this.profile.sessionHistory.push(entry);
+      this.profile.sessionHistory = this.profile.sessionHistory.slice(-60);
+      StatisticsEngine.recordSessionIntoDailyStats(this.profile, entry);
+    }
+    if (qualified) {
+      this.profile.standardizedTestRecords = this.profile.standardizedTestRecords ?? [];
       this.profile.standardizedTestRecords.unshift({
+        rulesVersion: STANDARDIZED_RULES_VERSION,
         durationSec: this.durationSec,
         pool: this.pool,
         language: this.language,
@@ -282,7 +318,6 @@ export class TrainingAcademyEngine {
       });
       this.profile.standardizedTestRecords = this.profile.standardizedTestRecords.slice(0, 30);
     }
-
-    return { wpm, accuracy, correct, errors, consistency };
+    return this.finalizedResult;
   }
 }

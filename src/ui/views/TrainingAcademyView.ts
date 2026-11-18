@@ -2,6 +2,7 @@ import { SvgArtwork } from '../../assets/SvgArtwork';
 import { LocalizationService } from '../../i18n/LocalizationService';
 import {
   TRAINING_ACTIVITIES,
+  STANDARDIZED_RULES_VERSION,
   TrainingAcademyEngine,
   TrainingActivityKind,
 } from '../../systems/TrainingAcademyEngine';
@@ -21,6 +22,7 @@ export interface TrainingViewState {
     correct: number;
     errors: number;
     consistency: number;
+    qualified: boolean;
   } | null;
 }
 
@@ -38,10 +40,10 @@ export class TrainingAcademyView {
     const resultBannerHtml = state.lastResult
       ? `<div class="sidebar-panel" style="border-color:#22c55e; background:rgba(22,163,74,0.12);" data-testid="training-result-banner">
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
-            <strong style="color:#4ade80;">✓ ${i18n.pick('Trening ukończony!', 'Session Completed!')}</strong>
+            <strong style="color:#4ade80;">✓ ${state.lastResult.qualified ? i18n.pick('Wynik zakwalifikowany do rankingu', 'Qualifying test result') : i18n.pick('Zapisano ćwiczenie (bez rekordu testu)', 'Practice saved (no test record)')}</strong>
             <div style="display:flex; gap:1rem; font-size:0.85rem;">
               <span>⚡ <strong>${state.lastResult.wpm} WPM</strong></span>
-              <span>🎯 <strong>${Math.round(state.lastResult.accuracy * 100)}%</strong></span>
+              <span>🎯 <strong>${state.lastResult.correct + state.lastResult.errors > 0 ? `${Math.round(state.lastResult.accuracy * 100)}%` : '—'}</strong></span>
               <span>⌨️ <strong>${state.lastResult.correct}</strong> ${i18n.pick('znaków', 'chars')}</span>
               <span>📈 ${i18n.pick('Spójność:', 'Consistency:')} <strong>${state.lastResult.consistency}%</strong></span>
             </div>
@@ -70,6 +72,7 @@ export class TrainingAcademyView {
         (p.standardizedTestRecords ?? [])
           .filter(
             (r) =>
+              r.rulesVersion === STANDARDIZED_RULES_VERSION && state.stdDuration > 0 &&
               r.durationSec === state.stdDuration &&
               r.pool === state.stdPool &&
               r.language === profile.settings.language
@@ -214,14 +217,14 @@ export class TrainingAcademyView {
       <section style="display:flex; flex-direction:column; gap:0.75rem;" data-testid="training-active-screen">
         <div class="sidebar-panel" style="flex-direction:row; justify-content:space-between; align-items:center;">
           <div style="display:flex; gap:1rem; align-items:center;">
-            <strong>${engine.mode === 'assessment' ? '⏱️ Test Standaryzowany' : '🎓 Akademia Pisania'}</strong>
+            <strong>${engine.mode === 'assessment' ? i18n.pick('⏱️ Test standaryzowany', '⏱️ Standardized test') : i18n.pick('🎓 Akademia Pisania', '🎓 Training Academy')}</strong>
             <span class="key-obj-pill">⚡ <strong id="training-wpm">${typing.getWpm()}</strong> WPM</span>
-            <span class="key-obj-pill">🎯 <strong id="training-acc">${typing.getTotalAttempts() > 0 ? Math.round(typing.getAccuracy() * 100) : 100}%</strong></span>
+            <span class="key-obj-pill">🎯 <strong id="training-acc">${typing.getTotalAttempts() > 0 ? `${Math.round(typing.getAccuracy() * 100)}%` : '—'}</strong></span>
             <span class="key-obj-pill">⌨️ <strong id="training-chars">${typing.getTotalCorrect()}</strong></span>
             ${timeLeft !== null ? `<span class="key-obj-pill" style="border-color:#facc15; color:#facc15;">⏱️ <strong id="training-timer">${timeLeft}s</strong></span>` : ''}
           </div>
           <button class="nav-btn" style="border-color:#4ade80; color:#4ade80;" data-action="finish-training" data-testid="finish-training-btn">
-            ✓ ${i18n.pick('Zakończ i zapisz', 'Finish & Save')}
+            ✓ ${engine.mode === 'assessment' && engine.durationSec > 0 ? i18n.pick('Przerwij test i zapisz ćwiczenie', 'End test & save practice') : i18n.pick('Zakończ i zapisz', 'Finish & Save')}
           </button>
         </div>
 
@@ -229,7 +232,7 @@ export class TrainingAcademyView {
           <div class="console-sequence-box text-large ${wrongKey ? 'sequence-box-error' : ''}" data-testid="training-sequence-box">
             <span class="char-done">${escapeHtml(entered)}</span><span class="char-current ${wrongKey ? 'char-error' : ''}">${escapeHtml(displayExpected)}</span><span class="char-pending">${escapeHtml(remaining)}</span>
           </div>
-          ${vkHtml}
+          ${engine.mode === 'assessment' && engine.durationSec > 0 ? '' : vkHtml}
         </div>
       </section>
     `;

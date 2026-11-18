@@ -42,8 +42,8 @@ export class ChallengesView {
               ? `<div style="color:#4ade80; font-size:0.8rem; font-weight:700; margin-top:0.4rem;">✓ ${i18n.pick('Ukończono:', 'Completed:')} ${done.score} pkt (${Math.round(done.accuracy * 100)}%)</div>`
               : ''
           }
-          <button class="primary-cta-btn" style="margin-top:0.65rem; padding:0.45rem 0.9rem; font-size:0.8rem;" data-start-challenge="${ch.id}" data-challenge-mission="${ch.missionId}" data-testid="start-challenge-${ch.frequency}">
-            ▶ ${i18n.pick('Podejmij wyzwanie', 'Launch Challenge')}
+          <button class="primary-cta-btn" style="margin-top:0.65rem; padding:0.45rem 0.9rem; font-size:0.8rem;" data-start-challenge="${ch.id}" data-challenge-mission="${ch.missionId}" data-testid="start-challenge-${ch.frequency}" disabled>
+            ▶ ${i18n.pick('Podgląd — tryb w przygotowaniu', 'Preview — mode not yet available')}
           </button>
         </div>
       `;
@@ -88,8 +88,8 @@ export class ChallengesView {
           ${
             owned
               ? `<div style="color:#4ade80; font-size:0.76rem; font-weight:700; margin-top:0.4rem;">✓ ${i18n.pick('Aktywna specjalizacja', 'Unlocked')}</div>`
-              : `<button class="nav-btn" style="margin-top:0.45rem;" data-unlock-tech="${node.id}" data-testid="unlock-tech-${node.id}" ${canBuy ? '' : 'disabled'}>
-                  🔬 ${i18n.pick('Odblokuj (1 Pkt Tech)', 'Unlock (1 Tech Pt)')}
+              : `<button class="nav-btn" style="margin-top:0.45rem;" data-unlock-tech="${node.id}" data-testid="unlock-tech-${node.id}" disabled>
+                  🔬 ${i18n.pick('W przygotowaniu', 'Coming later')}
                 </button>`
           }
         </div>
@@ -115,6 +115,7 @@ export class ChallengesView {
 
         <div class="sidebar-panel">
           <h3 style="font-size:1.05rem;">🦸 ${i18n.pick('Bohaterowie Bastionu KeyFort', 'KeyFort Heroes')}</h3>
+          <button class="nav-btn" data-action="clear-hero" data-testid="clear-hero" ${profile.selectedHeroId ? '' : 'disabled'}>${i18n.pick('Graj bez bohatera', 'Play without a hero')}</button>
           <div class="mode-grid">${heroesHtml}</div>
         </div>
 

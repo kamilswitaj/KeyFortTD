@@ -131,14 +131,18 @@ export class ChallengeEngine {
       if (tier === 'intermediate') return m.worldId <= 5;
       return true;
     });
-    const chosenMission: MissionDefinition =
+    let chosenMission: MissionDefinition =
       eligibleMissions[seed % eligibleMissions.length] ?? MISSIONS_DATA[0];
 
     const kinds: ChallengeKind[] =
       frequency === 'weekly'
         ? ['boss_rush', 'no_leak', 'two_towers', 'precision']
         : ['precision', 'no_leak', 'limited_gold', 'two_towers'];
-    const kind = kinds[(seed >> 4) % kinds.length];
+    const kind = kinds[(seed >>> 4) % kinds.length];
+    if (kind === 'boss_rush') {
+      const bosses = eligibleMissions.filter((m) => m.isBossMission);
+      chosenMission = bosses[seed % bosses.length] ?? chosenMission;
+    }
 
     const metaMap: Record<
       ChallengeKind,

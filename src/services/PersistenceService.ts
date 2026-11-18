@@ -602,7 +602,7 @@ export class PersistenceService {
 
         const charsTyped = Math.floor(clampFinite(entry.charsTyped, 0, 100000, 0));
         const durationSec = Math.round(clampFinite(entry.durationSec, 0, 86400, 0));
-        const qualifyingWpm = entry.unrestrictedResources === true || mode === 'sandbox'
+        const qualifyingWpm = entry.unrestrictedResources === true || mode === 'sandbox' || mode === 'training' || mode === 'assessment' || entry.qualifyingWpm === null
           ? null
           : StatisticsEngine.computeQualifyingWpm(charsTyped, durationSec);
 
@@ -677,7 +677,7 @@ export class PersistenceService {
       ? raw.unlockedHeroes.filter((h): h is HeroId => typeof h === 'string' && VALID_HEROES.has(h as HeroId))
       : [];
     const selectedHeroId: HeroId | null =
-      typeof raw.selectedHeroId === 'string' && VALID_HEROES.has(raw.selectedHeroId as HeroId)
+      typeof raw.selectedHeroId === 'string' && unlockedHeroes.includes(raw.selectedHeroId as HeroId)
         ? (raw.selectedHeroId as HeroId)
         : null;
     const techPoints = Math.floor(clampFinite(raw.techPoints, 0, 500, 0));
@@ -702,6 +702,7 @@ export class PersistenceService {
         if (isPlainObject(rec)) {
           const dur = rec.durationSec === 30 || rec.durationSec === 60 || rec.durationSec === 120 ? rec.durationSec : 0;
           standardizedTestRecords.push({
+            rulesVersion: rec.rulesVersion === 1 ? 1 : undefined,
             durationSec: dur,
             pool: rec.pool === 'full' ? 'full' : 'beginner',
             language: rec.language === 'en' ? 'en' : 'pl',

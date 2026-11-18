@@ -692,12 +692,15 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await page.getByTestId('finish-training-btn').click();
     await expect(page.getByTestId('training-result-banner')).toBeVisible();
     await expect(page.getByTestId('standardized-leaderboard-table')).toBeVisible();
+    await expect(page.getByTestId('standardized-leaderboard-table')).not.toContainText(/\d+ WPM/);
 
     // 3. Open Challenges, Heroes & Tech Tree screen
     await page.getByTestId('nav-challenges').click();
     await expect(page.getByTestId('challenges-screen')).toBeVisible();
     await expect(page.getByTestId('challenge-card-daily')).toBeVisible();
     await expect(page.getByTestId('challenge-card-weekly')).toBeVisible();
+    await expect(page.getByTestId('start-challenge-daily')).toBeDisabled();
+    await expect(page.getByTestId('start-challenge-weekly')).toBeDisabled();
     await expect(page.getByTestId('hero-card-guardian')).toBeVisible();
     await expect(page.getByTestId('tech-node-tech_kinetic_1')).toBeVisible();
   });

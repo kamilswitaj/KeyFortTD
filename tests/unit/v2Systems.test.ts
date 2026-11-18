@@ -118,6 +118,36 @@ describe('V2.0 Systems, Content Validation, Heroes, Synergies, Challenges & Trai
     expect(mission.worldId).toBeLessThanOrEqual(2);
   });
 
+  it('handles every challenge date without a signed seed index error and picks actual boss missions', () => {
+    for (let day = 0; day < 365; day++) {
+      const date = new Date(Date.UTC(2027, 0, day + 1));
+      for (const tier of ['beginner', 'intermediate', 'full'] as const) {
+        const daily = ChallengeEngine.getDailyChallenge(tier, date);
+        const weekly = ChallengeEngine.getWeeklyChallenge(tier, date);
+        expect(daily.kind).toBeTruthy();
+        expect(weekly.kind).toBeTruthy();
+        if (weekly.kind === 'boss_rush') expect(MISSIONS_DATA.find(m => m.id === weekly.missionId)?.isBossMission).toBe(true);
+      }
+    }
+  });
+
+  it('does not qualify short, aborted or empty assessments and counts practice only once', () => {
+    const p = PersistenceService.createDefaultProfile('p2', 'Tester');
+    const engine = new TrainingAcademyEngine({profile:p, mode:'assessment',durationSec:60});
+    engine.handleKey('Shift', 1000);
+    expect(engine.started).toBe(false);
+    for(let i=0;i<25;i++) engine.handleKey(engine.typingEngine.getExpectedChar()!, 2000+i*250);
+    engine.tick(7);
+    expect(engine.finishAndRecord().qualified).toBe(false);
+    engine.finishAndRecord();
+    expect(p.totalCharsTyped).toBe(25);
+    expect(p.sessionHistory[0].status).toBe('abandoned');
+    expect(p.standardizedTestRecords ?? []).toHaveLength(0);
+    const empty = new TrainingAcademyEngine({profile:p,mode:'training'});
+    empty.finishAndRecord();
+    expect(p.sessionHistory).toHaveLength(1);
+  });
+
   it('runs Training Academy and Standardized Tests without altering campaign unlocks', () => {
     const profile = PersistenceService.createDefaultProfile('p1', 'Tester');
     const engine = new TrainingAcademyEngine({
@@ -133,9 +163,15 @@ describe('V2.0 Systems, Content Validation, Heroes, Synergies, Challenges & Trai
       const ch = engine.typingEngine.getExpectedChar();
       if (ch) engine.handleKey(ch, (now += 200), false);
     }
-    engine.tick(10);
+    engine.tick(60);
     const summary = engine.finishAndRecord();
     expect(summary.correct).toBe(20);
+    expect(summary.wpm).toBe(4);
+    expect(profile.standardizedTestRecords?.length).toBe(1);
+    expect(profile.sessionHistory).toHaveLength(1);
+    expect(Object.values(profile.dailyStats)[0].correctChars).toBe(20);
+    engine.finishAndRecord();
+    expect(profile.totalCorrectChars).toBe(20);
     expect(profile.standardizedTestRecords?.length).toBe(1);
     expect(Object.keys(profile.completedMissions).length).toBe(0);
   });

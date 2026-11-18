@@ -85,3 +85,6 @@ Production UI smoke test: after `npm run build`, set `E2E_PROD=1` and run `npm r
 - **Training Academy & Standardized Typing Tests (`src/systems/TrainingAcademyEngine.ts`)**: Dedicated drills (weak keys, bigrams, Polish diacritics, Shift uppercase, themed words, sentences, relaxed practice) and fair 30s/60s/120s/Untimed family standardized tests.
 - **Interactive 8-World Map & Daily/Weekly Challenges (`src/systems/ChallengeEngine.ts`)**: Connected SVG campaign world map with light narrative, deterministic curriculum-tiered challenges, and 5-branch Technology Specializations.
 - **Save Schema V4 (`src/services/PersistenceService.ts`)**: Deterministic migration preserving V0–V3 saves, storage conflict detection, and interrupted-session protection.
+
+### V2 review notes
+Challenge and technology screens are previews until their gameplay rules and rewards are integrated. They cannot launch a normal campaign mission or spend points on nonfunctional upgrades. Timed standardized assessment records require the full duration and at least 20 correct characters, with WPM measured over the entire test; unfinished sessions retain educational practice without a competitive record. Older assessment records remain stored but are not ranked under the corrected rules.

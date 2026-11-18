@@ -1,4 +1,5 @@
 import { SvgArtwork } from '../assets/SvgArtwork';
+import { HEROES_DATA } from '../data/heroesData';
 import { getMissionById, MISSIONS_DATA } from '../data/curriculumData';
 import { LocalizationService } from '../i18n/LocalizationService';
 import { BattlefieldRenderer } from '../rendering/BattlefieldRenderer';
@@ -104,6 +105,7 @@ export class AppController {
     lastResult: null,
   };
   private trainingTickIntervalId: number | null = null;
+  private trainingLastTickMs = 0;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -169,6 +171,7 @@ export class AppController {
   }
 
   public navigateTo(screen: ScreenId): void {
+    if (screen !== 'training_academy') this.finishTrainingOrAssessment(true, false);
     if (this.currentScreen === 'gameplay' && screen !== 'gameplay' && this.activeSession) {
       if (!this.activeSession.isFinalized()) {
         this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
@@ -201,6 +204,7 @@ export class AppController {
       return;
     }
 
+    this.finishTrainingOrAssessment(true, false);
     // Finalize any previous unfinished session before starting a new one
     if (this.activeSession && !this.activeSession.isFinalized()) {
       this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
@@ -492,6 +496,8 @@ export class AppController {
   }
 
   private executeProfileSwitch(targetProfileId: string, startPlayAfterSwitch: boolean = false): void {
+    this.finishTrainingOrAssessment(true, false);
+    this.trainingState.lastResult = null;
     if (this.activeSession && !this.activeSession.isFinalized()) {
       this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
     }
@@ -656,6 +662,7 @@ export class AppController {
   private bindGlobalKeyboardAndFocus(): void {
     // Reload/close must retain practice just like explicitly leaving a mission.
     window.addEventListener('pagehide', () => {
+      this.finishTrainingOrAssessment(true, false);
       const session = this.activeSession;
       if (session && !session.isFinalized()) {
         this.finalizeSession(session, session.isSessionOver() ? 'completed' : 'abandoned');
@@ -669,6 +676,9 @@ export class AppController {
       if (event.persisted) this.renderCurrentScreen();
     });
     window.addEventListener('blur', () => {
+      const training = this.trainingState.activeEngine;
+      if (training?.mode === 'assessment' && training.started) this.finishTrainingOrAssessment(true);
+      else training?.typingEngine.markIdleBreak();
       if (this.activeSession) {
         this.activeSession.typingEngine.markIdleBreak();
         // Auto-pause active wave combat when window loses focus so the player is not penalized
@@ -682,6 +692,9 @@ export class AppController {
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
+        const training = this.trainingState.activeEngine;
+        if (training?.mode === 'assessment' && training.started) this.finishTrainingOrAssessment(true);
+        else training?.typingEngine.markIdleBreak();
         if (this.activeSession) {
           this.activeSession.typingEngine.markIdleBreak();
           if (this.activeSession.waveSystem.isWaveActive() && !this.activeSession.isSessionOver()) {
@@ -703,12 +716,13 @@ export class AppController {
         if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
           return;
         }
-        if (e.isComposing || e.metaKey || (e.ctrlKey && !e.getModifierState('AltGraph') && !e.altKey)) {
+        if (e.isComposing || e.metaKey || target?.isContentEditable || (e.ctrlKey && !e.getModifierState('AltGraph') && !e.altKey) || (e.altKey && !e.getModifierState('AltGraph') && !e.ctrlKey)) {
           return;
         }
         if (e.key === ' ' || e.key === '/' || e.key === "'") {
           e.preventDefault();
         }
+        if (this.advanceTrainingClock()) return;
         const tRes = this.trainingState.activeEngine.handleKey(e.key, Date.now(), e.repeat);
         if (tRes && !tRes.ignored) {
           this.audio.playKeystroke(tRes.isCorrect, tRes.combo);
@@ -1205,7 +1219,28 @@ export class AppController {
       if (wpmEl) wpmEl.textContent = nextSnap.wpm;
     }
 
+    this.updateHeroHudInPlace();
     this.lastHudSnapshot = nextSnap;
+  }
+
+  private updateHeroHudInPlace(): void {
+    const session = this.activeSession;
+    const hero = session?.getHero();
+    if (!session || !hero) return;
+    const def = HEROES_DATA[hero.id];
+    const xpText = `Lv ${hero.level} • ${hero.xp}/${hero.level * 120} XP`;
+    const xp = this.container.querySelector('[data-testid="hero-xp"]');
+    if (xp && xp.textContent !== xpText) xp.textContent = xpText;
+    for (const slot of [0, 1] as const) {
+      const btn = this.container.querySelector<HTMLButtonElement>(`[data-hero-ability="${slot}"]`);
+      if (!btn) continue;
+      const cd = Math.ceil(hero.abilityCooldowns[slot]);
+      const disabled = session.getIsPaused() || session.isSessionOver() || cd > 0 || session.economy.getEnergy() < def.abilities[slot].energyCost;
+      if (btn.disabled !== disabled) btn.disabled = disabled;
+      const meta = btn.querySelector('.ability-btn-meta');
+      const text = cd > 0 ? `${cd}s` : `${def.abilities[slot].energyCost}⚡`;
+      if (meta && meta.textContent !== text) meta.textContent = text;
+    }
   }
 
   private clearConsoleErrorHighlightInPlace(): void {
@@ -1639,27 +1674,13 @@ export class AppController {
       });
     });
 
-    this.container.querySelectorAll('[data-unlock-tech]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const techId = (e.currentTarget as HTMLElement).getAttribute('data-unlock-tech');
-        const profile = this.persistence.getActiveProfile();
-        if (!techId) return;
-        if (!profile.unlockedTechs) profile.unlockedTechs = [];
-        if (!profile.unlockedTechs.includes(techId) && (profile.techPoints ?? 0) >= 1) {
-          profile.techPoints = (profile.techPoints ?? 0) - 1;
-          profile.unlockedTechs.push(techId);
-          this.persistence.saveToStorage();
-          this.renderCurrentScreen();
-        }
-      });
+    this.container.querySelector('[data-action="clear-hero"]')?.addEventListener('click', () => {
+      this.persistence.getActiveProfile().selectedHeroId = null;
+      this.persistence.saveToStorage();
+      this.renderCurrentScreen();
     });
 
-    this.container.querySelectorAll('[data-start-challenge]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const mId = (e.currentTarget as HTMLElement).getAttribute('data-challenge-mission') ?? 'w1_m1';
-        this.startMission(mId, 'campaign');
-      });
-    });
+    // Challenge and technology execution is not connected yet; preview only.
 
     // Family Dashboard listeners
     this.container.querySelectorAll('[data-sort-metric]').forEach((th) => {
@@ -1892,6 +1913,7 @@ export class AppController {
   }
 
   private startTrainingOrAssessment(mode: 'training' | 'assessment', activityKind?: TrainingActivityKind): void {
+    this.finishTrainingOrAssessment(true, false);
     const profile = this.persistence.getActiveProfile();
     if (this.trainingTickIntervalId !== null) {
       window.clearInterval(this.trainingTickIntervalId);
@@ -1907,33 +1929,43 @@ export class AppController {
       pool: this.trainingState.stdPool,
       language: profile.settings.language,
     });
+    this.trainingLastTickMs = performance.now();
     this.trainingTickIntervalId = window.setInterval(() => {
       const eng = this.trainingState.activeEngine;
       if (!eng || this.currentScreen !== 'training_academy') return;
-      const done = eng.tick(1);
-      if (done) {
-        this.finishTrainingOrAssessment();
-      } else if (eng.durationSec > 0) {
+      if (this.advanceTrainingClock()) return;
+      if (eng.durationSec > 0) {
         const timerEl = document.getElementById('training-timer');
         if (timerEl) {
           timerEl.textContent = `${Math.max(0, Math.ceil(eng.durationSec - eng.elapsedSec))}s`;
         }
       }
-    }, 1000);
+    }, 100);
     this.renderCurrentScreen();
   }
 
-  private finishTrainingOrAssessment(): void {
+  private advanceTrainingClock(): boolean {
+    const now = performance.now();
+    const dt = Math.max(0, (now - this.trainingLastTickMs) / 1000);
+    this.trainingLastTickMs = now;
+    if (this.trainingState.activeEngine?.tick(dt)) {
+      this.finishTrainingOrAssessment();
+      return true;
+    }
+    return false;
+  }
+
+  private finishTrainingOrAssessment(abandoned = false, render = true): void {
     if (this.trainingTickIntervalId !== null) {
       window.clearInterval(this.trainingTickIntervalId);
       this.trainingTickIntervalId = null;
     }
     const eng = this.trainingState.activeEngine;
     if (eng) {
-      this.trainingState.lastResult = eng.finishAndRecord();
+      this.trainingState.lastResult = eng.finishAndRecord(abandoned);
       this.trainingState.activeEngine = null;
       this.persistence.saveToStorage();
+      if (render) this.renderCurrentScreen();
     }
-    this.renderCurrentScreen();
   }
 }

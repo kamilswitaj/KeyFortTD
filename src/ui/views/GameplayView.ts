@@ -541,7 +541,7 @@ export class GameplayView {
               ${SvgArtwork.heroPortrait(activeHero.id, 24)}
               <div>
                 <div style="font-size:0.73rem; font-weight:800; color:${hDef.color};">${escapeHtml(i18n.pick(hDef.namePl, hDef.nameEn))}</div>
-                <div style="font-size:0.62rem; color:#94a3b8;">Lv ${activeHero.level} • ${activeHero.xp}/${activeHero.level * 120} XP</div>
+                <div data-testid="hero-xp" style="font-size:0.62rem; color:#94a3b8;">Lv ${activeHero.level} • ${activeHero.xp}/${activeHero.level * 120} XP</div>
               </div>
             </div>
           </div>
