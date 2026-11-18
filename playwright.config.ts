@@ -6,6 +6,7 @@ const serverScript = process.env.E2E_PROD === '1' ? 'preview' : 'dev';
 
 export default defineConfig({
   testDir: './tests/e2e',
+  metadata: { production: serverScript === 'preview' },
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('public UI launches a playable mission without exposing the production debug hook', async ({ page }) => {
   await page.goto('/');
-  expect(await page.evaluate(() => Boolean(window.__keyfortApp))).toBe(process.env.E2E_PROD !== '1');
+  expect(await page.evaluate(() => Boolean(window.__keyfortApp))).toBe(test.info().project.metadata.production !== true);
   await page.getByTestId('quick-start-campaign-btn').click();
   await expect(page.getByTestId('battlefield-canvas')).toBeVisible();
   await expect(page.getByTestId('virtual-keyboard')).toBeVisible();
