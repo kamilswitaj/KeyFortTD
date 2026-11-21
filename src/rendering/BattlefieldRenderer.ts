@@ -2,6 +2,7 @@ import { HEROES_DATA } from '../data/heroesData';
 import { WORLD_THEME_PALETTES } from '../data/mapsData';
 import { TOWERS_DATA } from '../data/towersData';
 import { GameSessionEngine } from '../systems/GameSessionEngine';
+import { HERO_AURA_RADIUS } from '../systems/HeroSystem';
 import { SynergySystem } from '../systems/SynergySystem';
 import { TowerSystem } from '../systems/TowerSystem';
 import { ActiveEnemy, ActiveHero, ActiveTower, PlayerProfile, ProjectileEffect, TowerType, WorldThemeId } from '../types';
@@ -825,6 +826,18 @@ export class BattlefieldRenderer {
     ctx.save();
     ctx.translate(hero.x, hero.y);
 
+    // Guardian Hero tower-rally aura radius
+    if (hero.id === 'guardian') {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(0, 0, HERO_AURA_RADIUS, 0, Math.PI * 2);
+      ctx.strokeStyle = hero.activeBuffTimer > 0 ? 'rgba(250, 204, 21, 0.55)' : 'rgba(56, 189, 248, 0.22)';
+      ctx.lineWidth = hero.activeBuffTimer > 0 ? 2 : 1.2;
+      ctx.setLineDash([6, 6]);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Hero aura ring
     ctx.beginPath();
     ctx.arc(0, 0, 20 + Math.sin(this.animTime * 4) * 2, 0, Math.PI * 2);
@@ -875,6 +888,16 @@ export class BattlefieldRenderer {
 
     if (enemy.isGhost && !enemy.isRevealed) {
       ctx.globalAlpha = 0.42;
+    }
+
+    if (enemy.type === 'support' && enemy.stunTimer <= 0 && enemy.regenDisabledTimer <= 0) {
+      ctx.beginPath();
+      ctx.arc(0, 0, 95, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(52, 211, 153, 0.28)';
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     if (enemy.slowTimer > 0) {

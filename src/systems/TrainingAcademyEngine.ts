@@ -104,12 +104,20 @@ const STANDARDIZED_POOLS: Record<'beginner' | 'full', Record<Language, string[]>
       'las jak dal skala falka sada laska fala',
       'ala da las ja daj skala fala dada',
       'kasa fala lada sala klasa skala daj',
+      'hala gala skalf falka lada sala las',
+      'jak dla nas las dal fala skala laska',
+      'sad lad glad fal kal hal gal das jas',
+      'falkon skala lada kasa sala hala fala',
     ],
     en: [
       'f j f j d k d k s l s l a j f k d l s a',
       'fall lad ask sad flask salad all fall',
       'dad had a salad lad asks a lass',
       'ask dad fall flask glad lad sad all',
+      'half glad hall fall glass dash flash',
+      'jaguar lag hag ash sash lash gash',
+      'sad lad had a glass flask as a gift',
+      'all lads ask dad as flags fall',
     ],
   },
   full: {
@@ -118,17 +126,25 @@ const STANDARDIZED_POOLS: Record<'beginner' | 'full', Record<Language, string[]>
       'Równy rytm obu dłoni pomaga utrzymać wysoką celność podczas długich fal.',
       'Żółty smok wzleciał nad zieloną doliną i spojrzał na świetliste wieże.',
       'Młody inżynier sprawdził przewody, włączył tarcze i uruchomił główny portal.',
+      'Wisła płynie przez Kraków i Warszawę aż do Morza Bałtyckiego na północy.',
+      'Planety krążą wokół Słońca po eliptycznych orbitach od miliardów lat.',
+      'Dobry strateg łączy wieże mrozu z ciężką artylerią przeciw dużym grupom.',
+      'Spokojne i dokładne pisanie bez patrzenia na klawiaturę buduje trwałą szybkość.',
     ],
     en: [
       'Every accurate keystroke powers the crystal reactor inside the KeyFort bastion.',
       'Steady rhythm across both hands builds lasting speed without sacrificing accuracy.',
       'Bright energy towers guard the mountain pass while scouts race down the trail.',
       'Careful placement and smart upgrades defeat armored waves more reliably than haste.',
+      'Earth orbits the Sun once every year while the Moon shapes ocean tides.',
+      'Frost towers slow fast runners so heavy cannons can shatter entire squads.',
+      'Touch typing lets your eyes stay on the battlefield instead of searching keys.',
+      'Engineers calibrate crystal conduits before the next wave leaves the portal.',
     ],
   },
 };
 
-export const STANDARDIZED_RULES_VERSION = 1;
+export const STANDARDIZED_RULES_VERSION = 2;
 export interface AcademyResult {
   wpm: number;
   accuracy: number;
@@ -136,6 +152,7 @@ export interface AcademyResult {
   errors: number;
   consistency: number;
   qualified: boolean;
+  focusLostInvalidated?: boolean;
 }
 
 export class TrainingAcademyEngine {
@@ -152,6 +169,9 @@ export class TrainingAcademyEngine {
   private profile: PlayerProfile;
   private language: Language;
   private allowedKeys: string[];
+  private keyIntervalsMs: number[] = [];
+  private lastKeyTimestamp: number | null = null;
+  private focusLostInvalidated: boolean = false;
 
   constructor(options: {
     profile: PlayerProfile;
@@ -234,6 +254,14 @@ export class TrainingAcademyEngine {
     );
   }
 
+  public markFocusLost(): void {
+    if (this.mode === 'assessment' && this.durationSec > 0 && this.started && !this.completed) {
+      this.focusLostInvalidated = true;
+    }
+    this.typingEngine.markIdleBreak();
+    this.lastKeyTimestamp = null;
+  }
+
   public handleKey(key: string, now: number = Date.now(), isRepeat: boolean = false) {
     if (this.completed) return null;
     const res = this.typingEngine.processKeyInput(
@@ -244,7 +272,16 @@ export class TrainingAcademyEngine {
       now,
       isRepeat
     );
-    if (!res.ignored) this.started = true;
+    if (!res.ignored) {
+      this.started = true;
+      if (this.lastKeyTimestamp !== null) {
+        const delta = now - this.lastKeyTimestamp;
+        if (delta > 25 && delta <= 2500) {
+          this.keyIntervalsMs.push(delta);
+        }
+      }
+      this.lastKeyTimestamp = now;
+    }
     if (this.typingEngine.getRemainingQueueLength() < 3) {
       const more = this.buildInitialPrompts(this.allowedKeys);
       this.typingEngine.appendPrompts(more);
@@ -272,13 +309,33 @@ export class TrainingAcademyEngine {
     const accuracy = correct + errors > 0 ? correct / (correct + errors) : 0;
     const isTimedAssessment = this.mode === 'assessment' && this.durationSec > 0;
     const finishedTimedTest = isTimedAssessment && !abandoned && this.elapsedSec >= this.durationSec;
-    const qualified = finishedTimedTest && correct >= 20;
+    const qualified = finishedTimedTest && correct >= 20 && !this.focusLostInvalidated;
     // Timed assessment is measured over the whole allotted time, not typing bursts.
     const wpm = isTimedAssessment
       ? StatisticsEngine.computeWeightedWpm(correct, finishedTimedTest ? this.durationSec : this.elapsedSec)
       : this.typingEngine.getWpm();
-    const consistency = Math.max(0, Math.min(100, Math.round(accuracy * 100 - Math.min(15, errors * 0.8))));
-    this.finalizedResult = { wpm, accuracy, correct, errors, consistency, qualified };
+
+    // True timing-based rhythm consistency from coefficient of variation of active keystroke intervals
+    let consistency = 100;
+    if (this.keyIntervalsMs.length >= 4) {
+      const mean = this.keyIntervalsMs.reduce((s, v) => s + v, 0) / this.keyIntervalsMs.length;
+      const variance =
+        this.keyIntervalsMs.reduce((s, v) => s + (v - mean) ** 2, 0) / this.keyIntervalsMs.length;
+      const cv = mean > 0 ? Math.sqrt(variance) / mean : 0;
+      consistency = Math.max(0, Math.min(100, Math.round(100 - cv * 65)));
+    } else if (correct + errors === 0) {
+      consistency = 0;
+    }
+
+    this.finalizedResult = {
+      wpm,
+      accuracy,
+      correct,
+      errors,
+      consistency,
+      qualified,
+      focusLostInvalidated: this.focusLostInvalidated,
+    };
     if (correct + errors > 0) {
       const entry: SessionHistoryEntry = {
         profileId: this.ownerProfileId,

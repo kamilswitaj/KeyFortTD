@@ -699,9 +699,84 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await expect(page.getByTestId('challenges-screen')).toBeVisible();
     await expect(page.getByTestId('challenge-card-daily')).toBeVisible();
     await expect(page.getByTestId('challenge-card-weekly')).toBeVisible();
-    await expect(page.getByTestId('start-challenge-daily')).toBeDisabled();
-    await expect(page.getByTestId('start-challenge-weekly')).toBeDisabled();
+    await expect(page.getByTestId('start-challenge-daily')).toBeEnabled();
+    await expect(page.getByTestId('start-challenge-weekly')).toBeEnabled();
     await expect(page.getByTestId('hero-card-guardian')).toBeVisible();
     await expect(page.getByTestId('tech-node-tech_kinetic_1')).toBeVisible();
+  });
+
+  test('V2.1 executes Daily Challenge with rules & once-only Tech Point reward, purchases Technology, and supports Hero vs No-Hero play', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+
+    // 1. Open Challenges and launch Daily Challenge (home_anchors tier for fresh profile)
+    await page.getByTestId('nav-challenges').click();
+    await expect(page.getByTestId('challenges-screen')).toBeVisible();
+    await page.getByTestId('start-challenge-daily').click();
+
+    await expect(page.getByTestId('gameplay-screen')).toBeVisible();
+    await expect(page.getByTestId('challenge-guidance-banner')).toBeVisible();
+
+    // Complete the Daily Challenge via simulation & typing
+    await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      const s = app.getActiveSession()!;
+      s.economy.addGold(500);
+      s.buildTower('gun', 1);
+      s.buildTower('cannon', 2);
+      let now = Date.now();
+      for (let i = 0; i < s.getRequiredCharsForVictory() + 5; i++) {
+        const ch = s.typingEngine.getExpectedChar();
+        if (ch) s.handleKeyInput(ch, (now += 220), false);
+      }
+      let guard = 0;
+      while (!s.isSessionOver() && guard < 4000) {
+        if (!s.waveSystem.isWaveActive() && s.waveSystem.hasMoreWaves()) s.startNextWave();
+        s.update(0.1);
+        guard++;
+      }
+    });
+
+    await expect(page.getByTestId('mission-results-modal')).toBeVisible();
+    await expect(page.getByTestId('results-title')).toContainText('Wyzwanie Ukończone');
+    await page.getByTestId('results-back-challenges-btn').click();
+
+    // Verify Tech Point awarded, leaderboard updated, and source campaign mission NOT auto-completed
+    await expect(page.getByTestId('tech-points-value')).toHaveText('1');
+    await expect(page.getByTestId('challenge-leaderboard-daily')).toBeVisible();
+
+    // 2. Purchase Hardened Barrels technology
+    await page.getByTestId('unlock-tech-tech_kinetic_1').click();
+    await expect(page.getByTestId('tech-points-value')).toHaveText('0');
+
+    // 3. Unlock Guardian via progression, select Hero, launch w1_m4, then clear Hero
+    await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      const p = app.persistence.getActiveProfile();
+      p.unlockedHeroes = ['guardian'];
+      p.selectedHeroId = 'guardian';
+      for (const mId of ['w1_m1', 'w1_m2', 'w1_m3']) {
+        p.completedMissions[mId] = {
+          missionId: mId,
+          completed: true,
+          stars: 3,
+          bestAccuracy: 0.95,
+          bestWpm: 25,
+          bestScore: 1500,
+          timesCompleted: 1,
+        };
+      }
+      app.persistence.saveToStorage();
+      app.startMission('w1_m4', 'campaign');
+    });
+    await expect(page.getByTestId('hero-panel')).toBeVisible();
+    await page.getByTestId('exit-gameplay-btn').click();
+
+    await page.getByTestId('nav-challenges').click();
+    await page.getByTestId('clear-hero').click();
+    await page.evaluate(() => window.__keyfortApp!.startMission('w1_m4', 'campaign'));
+    await expect(page.getByTestId('hero-panel')).toHaveCount(0);
   });
 });

@@ -1,6 +1,7 @@
 import { TOWERS_DATA } from '../data/towersData';
 import {
   ActiveEnemy,
+  ActiveHero,
   ActiveTower,
   TargetingPriority,
   TowerPad,
@@ -8,7 +9,9 @@ import {
   UpgradeBranch,
   UpgradeTierDefinition,
 } from '../types';
+import { HeroSystem } from './HeroSystem';
 import { ResourceEconomy } from './ResourceEconomy';
+import { TechModifiers, TechnologySystem } from './TechnologySystem';
 
 export interface ComputedTowerStats {
   damage: number;
@@ -190,7 +193,11 @@ export class TowerSystem {
   /**
    * Computes effective stats including nearby tower aura buffs (Reactor / Tesla Quantum Conduit / Ghost Spotters).
    */
-  public static computeEffectiveStats(tower: ActiveTower, allTowers: ActiveTower[]): ComputedTowerStats {
+  public static computeEffectiveStats(
+    tower: ActiveTower,
+    allTowers: ActiveTower[],
+    context?: { hero?: ActiveHero | null; techModifiers?: TechModifiers }
+  ): ComputedTowerStats {
     const base = TowerSystem.computeBaseAndUpgradeStats(tower);
     let totalAuraDamageBonus = 0;
     let bestCommandAura = 0;
@@ -222,6 +229,29 @@ export class TowerSystem {
     const combinedAura = Math.min(0.85, totalAuraDamageBonus + bestCommandAura);
     if (combinedAura > 0) {
       base.damage = Math.round(base.damage * (1 + combinedAura));
+    }
+
+    // Technology modifiers (centralized, capped, disabled in standardized challenges)
+    if (context?.techModifiers) {
+      if (TechnologySystem.isKineticTower(tower.type) && context.techModifiers.kineticDamageMultiplier !== 1) {
+        base.damage = Math.round(base.damage * context.techModifiers.kineticDamageMultiplier);
+      }
+      if (context.techModifiers.controlDurationMultiplier !== 1) {
+        if (base.slowDuration > 0) {
+          base.slowDuration = Number((base.slowDuration * context.techModifiers.controlDurationMultiplier).toFixed(2));
+        }
+        if (base.burnDuration > 0) {
+          base.burnDuration = Number((base.burnDuration * context.techModifiers.controlDurationMultiplier).toFixed(2));
+        }
+      }
+    }
+
+    // Guardian Hero passive (+10%) & active Rally (+25%) fire-rate aura
+    if (context?.hero) {
+      const heroRateMult = HeroSystem.getGuardianAuraFireRateMultiplier(tower, context.hero);
+      if (heroRateMult > 1) {
+        base.fireRate = Number((base.fireRate * heroRateMult).toFixed(2));
+      }
     }
 
     // Deterministic tower synergies

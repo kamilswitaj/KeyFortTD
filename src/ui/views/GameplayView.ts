@@ -218,7 +218,30 @@ export class GameplayView {
         : '';
 
     let guidanceSlotInnerHtml = '';
-    if (session.isFollowUpPracticeActive()) {
+    if (session.mode === 'challenge' && session.challengeConfig) {
+      const ch = session.challengeConfig;
+      const usedCount = session.getUsedTowerTypes().length;
+      const maxTypes = ch.completionCriteria.maxTowerTypes;
+      const chStatus =
+        ch.kind === 'no_leak'
+          ? i18n.pick(`Bez Skazy: ${session.getCumulativeBaseDamage()} obr. bazy`, `No Leak: ${session.getCumulativeBaseDamage()} base dmg`)
+          : ch.kind === 'two_towers'
+          ? i18n.pick(`Duet Taktyczny: ${usedCount}/${maxTypes} typów wież`, `Tactical Duo: ${usedCount}/${maxTypes} tower types`)
+          : ch.kind === 'precision'
+          ? i18n.pick(`Celność min. ${Math.round(ch.completionCriteria.targetAccuracy * 100)}%`, `Min accuracy ${Math.round(ch.completionCriteria.targetAccuracy * 100)}%`)
+          : ch.kind === 'limited_gold'
+          ? i18n.pick('Oszczędny Strateg (75% złota)', 'Frugal Tactician (75% gold)')
+          : i18n.pick('Polowanie na Bossa (+25% HP)', 'Boss Hunt (+25% HP)');
+
+      guidanceSlotInnerHtml = `
+        <div class="onboarding-banner" style="border-left: 4px solid #fb923c;" data-testid="challenge-guidance-banner">
+          <span class="onboarding-step-badge" style="background:rgba(251,146,60,0.18); color:#fb923c; border:1px solid #fb923c;">
+            ⚔️ ${i18n.pick('WYZWANIE', 'CHALLENGE')}
+          </span>
+          <span class="onboarding-text">${escapeHtml(chStatus)}</span>
+        </div>
+      `;
+    } else if (session.isFollowUpPracticeActive()) {
       guidanceSlotInnerHtml = `
         <div class="followup-banner" data-testid="followup-practice-banner">
           ⚔️ <strong>${i18n.pick('Fale obronione!', 'Waves cleared!')}</strong>
@@ -318,12 +341,15 @@ export class GameplayView {
     const towerButtonsHtml = visibleTowers.map((type) => {
       const def = TOWERS_DATA[type];
       const meta = TOWER_SHORT_META[type];
-      const isUnlocked = session.mode !== 'campaign' || profile.unlockedTowers.includes(type);
+      const isAllowed = session.canBuildTowerType(type);
+      const isUnlocked = session.challengeConfig
+        ? session.challengeConfig.allowedTowers.includes(type)
+        : session.mode !== 'campaign' || profile.unlockedTowers.includes(type);
       const canAfford = session.economy.getGold() >= def.cost;
       const hasEmptyPad = session.map.pads.some(
         (p) => !session.getTowers().some((t) => t.padIndex === p.index)
       );
-      const canBuild = isUnlocked && canAfford && hasEmptyPad;
+      const canBuild = isAllowed && canAfford && hasEmptyPad;
 
       return `
         <button
@@ -532,8 +558,8 @@ export class GameplayView {
       const hDef = HEROES_DATA[activeHero.id];
       const cd0 = Math.ceil(activeHero.abilityCooldowns[0]);
       const cd1 = Math.ceil(activeHero.abilityCooldowns[1]);
-      const can0 = !session.getIsPaused() && !session.isSessionOver() && cd0 === 0 && session.economy.getEnergy() >= hDef.abilities[0].energyCost;
-      const can1 = !session.getIsPaused() && !session.isSessionOver() && cd1 === 0 && session.economy.getEnergy() >= hDef.abilities[1].energyCost;
+      const can0 = session.canTriggerHeroAbility(0);
+      const can1 = session.canTriggerHeroAbility(1);
       heroPanelHtml = `
         <div class="sidebar-panel" style="padding:0.35rem 0.5rem; gap:0.25rem;" data-testid="hero-panel">
           <div style="display:flex; align-items:center; justify-content:space-between; gap:0.3rem;">
@@ -541,18 +567,18 @@ export class GameplayView {
               ${SvgArtwork.heroPortrait(activeHero.id, 24)}
               <div>
                 <div style="font-size:0.73rem; font-weight:800; color:${hDef.color};">${escapeHtml(i18n.pick(hDef.namePl, hDef.nameEn))}</div>
-                <div data-testid="hero-xp" style="font-size:0.62rem; color:#94a3b8;">Lv ${activeHero.level} • ${activeHero.xp}/${activeHero.level * 120} XP</div>
+                <div id="hud-hero-xp" data-testid="hero-xp" style="font-size:0.62rem; color:#94a3b8;">Lv ${activeHero.level} • ${activeHero.xp}/${activeHero.level * 120} XP</div>
               </div>
             </div>
           </div>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
-            <button class="ability-btn" data-hero-ability="0" data-testid="hero-ability-0" ${can0 ? '' : 'disabled'} title="${escapeHtml(i18n.pick(hDef.abilities[0].descPl, hDef.abilities[0].descEn))}">
+            <button class="ability-btn" id="hud-hero-ability-0" data-hero-ability="0" data-testid="hero-ability-0" ${can0 ? '' : 'disabled'} title="${escapeHtml(i18n.pick(hDef.abilities[0].descPl, hDef.abilities[0].descEn))}">
               <span class="ability-btn-label" style="font-size:0.65rem;">${escapeHtml(i18n.pick(hDef.abilities[0].namePl, hDef.abilities[0].nameEn))}</span>
-              <span class="ability-btn-meta">${cd0 > 0 ? `${cd0}s` : `${hDef.abilities[0].energyCost}⚡`}</span>
+              <span class="ability-btn-meta" id="hud-hero-ability-0-meta">${cd0 > 0 ? `${cd0}s` : `${hDef.abilities[0].energyCost}⚡`}</span>
             </button>
-            <button class="ability-btn" data-hero-ability="1" data-testid="hero-ability-1" ${can1 ? '' : 'disabled'} title="${escapeHtml(i18n.pick(hDef.abilities[1].descPl, hDef.abilities[1].descEn))}">
+            <button class="ability-btn" id="hud-hero-ability-1" data-hero-ability="1" data-testid="hero-ability-1" ${can1 ? '' : 'disabled'} title="${escapeHtml(i18n.pick(hDef.abilities[1].descPl, hDef.abilities[1].descEn))}">
               <span class="ability-btn-label" style="font-size:0.65rem;">${escapeHtml(i18n.pick(hDef.abilities[1].namePl, hDef.abilities[1].nameEn))}</span>
-              <span class="ability-btn-meta">${cd1 > 0 ? `${cd1}s` : `${hDef.abilities[1].energyCost}⚡`}</span>
+              <span class="ability-btn-meta" id="hud-hero-ability-1-meta">${cd1 > 0 ? `${cd1}s` : `${hDef.abilities[1].energyCost}⚡`}</span>
             </button>
           </div>
         </div>
@@ -654,6 +680,7 @@ export class GameplayView {
     i18n: LocalizationService
   ): string {
     const typing = session.typingEngine;
+    const isChallenge = session.mode === 'challenge' && session.challengeConfig !== null;
     const isVictory = lastOutcome?.victory ?? session.isVictory();
     const stars = lastOutcome?.stars ?? (isVictory ? 3 : 0);
     const nextMission = MISSIONS_DATA.find((m) => m.globalIndex === session.mission.globalIndex + 1);
@@ -685,7 +712,15 @@ export class GameplayView {
       <div class="modal-overlay" data-testid="mission-results-modal">
         <div class="modal-card">
           <h2 style="font-size:1.55rem; color:${isVictory ? '#4ade80' : '#f43f5e'}; text-align:center;" data-testid="results-title">
-            ${isVictory ? `🏆 ${i18n.t('mission.victory')}` : `💥 ${i18n.t('mission.defeat')}`}
+            ${
+              isChallenge
+                ? isVictory
+                  ? `⚔️ ${i18n.pick('Wyzwanie Ukończone!', 'Challenge Completed!')}`
+                  : `💥 ${i18n.pick('Wyzwanie Niezaliczone', 'Challenge Failed')}`
+                : isVictory
+                ? `🏆 ${i18n.t('mission.victory')}`
+                : `💥 ${i18n.t('mission.defeat')}`
+            }
           </h2>
           ${
             isVictory
@@ -721,9 +756,15 @@ export class GameplayView {
           }
 
           <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:nowrap;">
-            <button class="nav-btn" data-action="modal-back-map" data-testid="results-back-map-btn">
-              🗺️ ${i18n.t('nav.backToMap')}
-            </button>
+            ${
+              isChallenge
+                ? `<button class="nav-btn" data-action="modal-back-challenges" data-testid="results-back-challenges-btn">
+                    ⚔️ ${i18n.pick('Wróć do Wyzwań', 'Back to Challenges')}
+                  </button>`
+                : `<button class="nav-btn" data-action="modal-back-map" data-testid="results-back-map-btn">
+                    🗺️ ${i18n.t('nav.backToMap')}
+                  </button>`
+            }
             <button class="nav-btn" data-action="modal-retry" data-testid="results-retry-btn">
               🔄 ${i18n.t('mission.retry')}
             </button>

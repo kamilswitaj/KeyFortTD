@@ -8,10 +8,13 @@ import { PersistenceService } from '../../src/services/PersistenceService';
 import { ChallengeEngine, TECH_TREE_DATA } from '../../src/systems/ChallengeEngine';
 import { CombatSystem } from '../../src/systems/CombatSystem';
 import { EnemySystem } from '../../src/systems/EnemySystem';
+import { GameSessionEngine } from '../../src/systems/GameSessionEngine';
 import { HeroSystem } from '../../src/systems/HeroSystem';
 import { PathSystem } from '../../src/systems/PathSystem';
+import { ProgressionEngine } from '../../src/systems/ProgressionEngine';
 import { ResourceEconomy } from '../../src/systems/ResourceEconomy';
 import { SynergySystem } from '../../src/systems/SynergySystem';
+import { TechnologySystem } from '../../src/systems/TechnologySystem';
 import { TowerSystem } from '../../src/systems/TowerSystem';
 import { TRAINING_ACTIVITIES, TrainingAcademyEngine } from '../../src/systems/TrainingAcademyEngine';
 
@@ -174,5 +177,153 @@ describe('V2.0 Systems, Content Validation, Heroes, Synergies, Challenges & Trai
     expect(profile.totalCorrectChars).toBe(20);
     expect(profile.standardizedTestRecords?.length).toBe(1);
     expect(Object.keys(profile.completedMissions).length).toBe(0);
+  });
+
+  it('enforces curriculum-safe ChallengeEngine tiers, UTC week boundaries, Two Towers, No Leak, and exactly-once rewards', () => {
+    const freshProfile = PersistenceService.createDefaultProfile('p_fresh', 'Novice');
+    expect(ChallengeEngine.getPlayerEligibleTier(freshProfile)).toBe('home_anchors');
+    const safeDaily = ChallengeEngine.getDailyChallenge('home_anchors', new Date('2025-12-31T23:50:00Z'));
+    expect(['w1_m1', 'w1_m2']).toContain(safeDaily.missionId);
+
+    // ISO week boundary determinism across year boundary
+    expect(ChallengeEngine.getWeekKey(new Date('2025-12-31T12:00:00Z'))).toBe('2026-W01');
+    expect(ChallengeEngine.getWeekKey(new Date('2026-01-01T12:00:00Z'))).toBe('2026-W01');
+    expect(ChallengeEngine.getWeekKey(new Date('2026-01-05T12:00:00Z'))).toBe('2026-W02');
+
+    // Two Towers restriction persists even after selling a tower
+    const advProfile = PersistenceService.createDefaultProfile('p_adv', 'Pro');
+    const twoTowersConfig = ChallengeEngine.buildChallengeSessionConfig(
+      {
+        ...safeDaily,
+        kind: 'two_towers',
+        tier: 'beginner',
+        maxTowerTypes: 2,
+      },
+      'standard'
+    );
+    const session = new GameSessionEngine({
+      mode: 'challenge',
+      mission: MISSIONS_DATA[0],
+      profile: advProfile,
+      challengeConfig: twoTowersConfig,
+    });
+    session.economy.addGold(1000);
+    const t1 = session.buildTower('gun', 0)!;
+    expect(t1).not.toBeNull();
+    const t2 = session.buildTower('cannon', 1)!;
+    expect(t2).not.toBeNull();
+    session.sellTower(t1.id);
+    // Selling gun does NOT allow building a 3rd distinct type (frost)
+    expect(session.canBuildTowerType('frost')).toBe(false);
+    expect(session.buildTower('frost', 2)).toBeNull();
+
+    // Exactly-once Tech Point reward & campaign mission stays untouched
+    const rec1 = ChallengeEngine.recordChallengeCompletion(advProfile, twoTowersConfig, {
+      challengeId: twoTowersConfig.challengeId,
+      rulesetVersion: 1,
+      profileId: advProfile.id,
+      timestamp: 1000,
+      difficulty: 'standard',
+      score: 1200,
+      accuracy: 0.95,
+      correctChars: 50,
+      errors: 2,
+      durationSec: 40,
+      wpm: 25,
+      baseDamage: 0,
+      wavesCompleted: 3,
+      towerTypesUsed: ['gun', 'cannon'],
+      heroId: null,
+      status: 'completed',
+    });
+    expect(rec1.awardedTechPoints).toBe(twoTowersConfig.techPointReward);
+    const rec2 = ChallengeEngine.recordChallengeCompletion(advProfile, twoTowersConfig, {
+      challengeId: twoTowersConfig.challengeId,
+      rulesetVersion: 1,
+      profileId: advProfile.id,
+      timestamp: 2000,
+      difficulty: 'standard',
+      score: 1400,
+      accuracy: 0.96,
+      correctChars: 50,
+      errors: 2,
+      durationSec: 38,
+      wpm: 26,
+      baseDamage: 0,
+      wavesCompleted: 3,
+      towerTypesUsed: ['gun', 'cannon'],
+      heroId: null,
+      status: 'completed',
+    });
+    expect(rec2.awardedTechPoints).toBe(0);
+    expect(advProfile.completedMissions[twoTowersConfig.sourceMissionId]).toBeUndefined();
+  });
+
+  it('applies all 5 TechnologySystem modifiers, validates purchases, and applies Guardian aura & explicitNoHero', () => {
+    const profile = PersistenceService.createDefaultProfile('p_tech', 'TechUser');
+    profile.techPoints = 3;
+    expect(TechnologySystem.purchaseTechnology(profile, 'invalid_id').success).toBe(false);
+    expect(TechnologySystem.purchaseTechnology(profile, 'tech_kinetic_1').success).toBe(true);
+    expect(TechnologySystem.purchaseTechnology(profile, 'tech_kinetic_1').success).toBe(false);
+    expect(TechnologySystem.purchaseTechnology(profile, 'tech_energy_1').success).toBe(true);
+    expect(TechnologySystem.purchaseTechnology(profile, 'tech_defense_1').success).toBe(true);
+    expect(profile.techPoints).toBe(0);
+
+    const mods = TechnologySystem.computeTechModifiers(profile.unlockedTechs);
+    expect(mods.kineticDamageMultiplier).toBe(1.06);
+    expect(mods.startingEnergyBonus).toBe(10);
+    expect(mods.startingLivesBonus).toBe(2);
+
+    const gun = TowerSystem.createTower('gun', { index: 0, x: 100, y: 100 }, 'g');
+    const guardian = HeroSystem.createActiveHero('guardian', { x: 130, y: 100 });
+    guardian.activeBuffTimer = 5.0; // Rally active!
+    const boosted = TowerSystem.computeEffectiveStats(gun, [gun], { hero: guardian, techModifiers: mods });
+    expect(boosted.damage).toBeGreaterThan(TOWERS_DATA.gun.damage);
+    expect(boosted.fireRate).toBeCloseTo(TOWERS_DATA.gun.fireRate * 1.35, 1);
+
+    // explicitNoHero must not be overwritten on mission win
+    profile.explicitNoHero = true;
+    profile.selectedHeroId = null;
+    ProgressionEngine.evaluateMissionResult(
+      MISSIONS_DATA[2],
+      profile,
+      20,
+      20,
+      100,
+      0.95,
+      28,
+      15,
+      { d: { key: 'd', attempts: 12, correct: 12, errors: 0 } }
+    );
+    expect(profile.unlockedHeroes).toContain('guardian');
+    expect(profile.selectedHeroId).toBeNull();
+  });
+
+  it('executes Support healing aura, Evasive dodge, and distinct World Boss phase transitions', () => {
+    const path = new PathSystem(MAPS_DATA.green_valley_1.waypoints);
+    const ally = EnemySystem.createEnemy('tank', path, 1, 100);
+    ally.hp = 100;
+    const sup = EnemySystem.createEnemy('support', path, 1, 120);
+    EnemySystem.applySupportAuras([ally, sup], 1.0);
+    expect(ally.hp).toBeCloseTo(109, 1);
+
+    // Dead ally must never be resurrected
+    const dead = EnemySystem.createEnemy('scout', path, 1, 110);
+    dead.hp = 0;
+    EnemySystem.applySupportAuras([dead, sup], 1.0);
+    expect(dead.hp).toBe(0);
+
+    // Evasive dodges every 4th single-target kinetic hit when not slowed
+    const ev = EnemySystem.createEnemy('evasive', path, 1, 140);
+    const gun = TowerSystem.createTower('gun', { index: 0, x: 100, y: 100 }, 'g');
+    const hits = [1, 2, 3, 4].map(() => CombatSystem.applyHitToEnemy(ev, 10, {}, gun));
+    expect(hits[3]).toBe(0);
+
+    // World 2 boss summons ghost in phase 2
+    const boss2 = EnemySystem.createEnemy('boss', path, 1, 100, 2);
+    boss2.hp = Math.round(boss2.maxHp * 0.5);
+    const step = EnemySystem.updateEnemy(boss2, 0.1, path);
+    expect(step.bossPhaseTriggered).toBe(2);
+    expect(step.spawnedMinions.some((m) => m.type === 'ghost')).toBe(true);
   });
 });

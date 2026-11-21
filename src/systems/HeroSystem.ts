@@ -1,7 +1,9 @@
 import { HEROES_DATA } from '../data/heroesData';
-import { ActiveEnemy, ActiveHero, FloatingTextEffect, HeroId, Point2D, ProjectileEffect } from '../types';
+import { ActiveEnemy, ActiveHero, ActiveTower, FloatingTextEffect, HeroId, Point2D, ProjectileEffect } from '../types';
 import { CombatSystem } from './CombatSystem';
 import { ResourceEconomy } from './ResourceEconomy';
+
+export const HERO_AURA_RADIUS = 175;
 
 export interface HeroTickResult {
   projectilesCreated: ProjectileEffect[];
@@ -27,8 +29,8 @@ export class HeroSystem {
     };
   }
 
-  public static addHeroXp(hero: ActiveHero, xpGain: number): boolean {
-    hero.xp += xpGain;
+  public static addHeroXp(hero: ActiveHero, xpGain: number, xpMultiplier: number = 1): boolean {
+    hero.xp += Math.round(xpGain * xpMultiplier);
     let leveledUp = false;
     while (hero.xp >= hero.level * 120 && hero.level < 10) {
       hero.xp -= hero.level * 120;
@@ -36,6 +38,38 @@ export class HeroSystem {
       leveledUp = true;
     }
     return leveledUp;
+  }
+
+  public static getGuardianAuraFireRateMultiplier(tower: ActiveTower, hero: ActiveHero | null): number {
+    if (!hero || hero.id !== 'guardian') return 1.0;
+    const dist = Math.hypot(tower.x - hero.x, tower.y - hero.y);
+    if (dist > HERO_AURA_RADIUS) return 1.0;
+    const passiveBonus = 0.1;
+    const rallyBonus = hero.activeBuffTimer > 0 ? 0.25 : 0;
+    return 1 + passiveBonus + rallyBonus;
+  }
+
+  public static canTriggerHeroAbility(
+    hero: ActiveHero | null,
+    slotIndex: number,
+    enemies: ActiveEnemy[],
+    economy: ResourceEconomy
+  ): boolean {
+    if (!hero || (slotIndex !== 0 && slotIndex !== 1)) return false;
+    const def = HEROES_DATA[hero.id];
+    const ability = def.abilities[slotIndex];
+    if (!ability) return false;
+    if (hero.abilityCooldowns[slotIndex] > 0) return false;
+    if (economy.getEnergy() < ability.energyCost) return false;
+    const needsActiveEnemies =
+      (hero.id === 'guardian' && slotIndex === 1) ||
+      (hero.id === 'engineer' && slotIndex === 1) ||
+      hero.id === 'ranger' ||
+      hero.id === 'arcanist';
+    if (needsActiveEnemies && enemies.filter((e) => e.hp > 0).length === 0) {
+      return false;
+    }
+    return true;
   }
 
   public static getEffectiveDamage(hero: ActiveHero): number {
@@ -117,11 +151,11 @@ export class HeroSystem {
     economy: ResourceEconomy,
     healBaseCallback: (amount: number) => void
   ): { triggered: boolean; projectiles: ProjectileEffect[]; floatingTexts: FloatingTextEffect[] } {
-    const def = HEROES_DATA[hero.id];
-    const ability = def.abilities[slotIndex];
-    if (hero.abilityCooldowns[slotIndex] > 0 || economy.getEnergy() < ability.energyCost) {
+    if (!HeroSystem.canTriggerHeroAbility(hero, slotIndex, enemies, economy)) {
       return { triggered: false, projectiles: [], floatingTexts: [] };
     }
+    const def = HEROES_DATA[hero.id];
+    const ability = def.abilities[slotIndex];
 
     if (!economy.consumeEnergy(ability.energyCost)) {
       return { triggered: false, projectiles: [], floatingTexts: [] };

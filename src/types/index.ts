@@ -563,6 +563,25 @@ export interface AppSettings {
   showWpmStat: boolean;
 }
 
+export interface ChallengeCompletionRecord {
+  challengeId: string;
+  rulesetVersion: number;
+  profileId: string;
+  timestamp: number;
+  difficulty: DifficultyLevel;
+  score: number;
+  accuracy: number;
+  correctChars: number;
+  errors: number;
+  durationSec: number;
+  wpm: number;
+  baseDamage: number;
+  wavesCompleted: number;
+  towerTypesUsed: TowerType[];
+  heroId: HeroId | null;
+  status: 'completed' | 'failed';
+}
+
 export interface PlayerProfile {
   id: string;
   name: string;
@@ -595,11 +614,26 @@ export interface PlayerProfile {
   dailyStats: Record<string, DailyPracticeAggregate>;
   settings: AppSettings;
   selectedHeroId?: HeroId | null;
+  explicitNoHero?: boolean;
   unlockedHeroes?: HeroId[];
   heroXp?: Partial<Record<HeroId, number>>;
   techPoints?: number;
   unlockedTechs?: string[];
-  completedChallenges?: Record<string, { score: number; accuracy: number; timestamp: number }>;
+  completedChallenges?: Record<
+    string,
+    {
+      score: number;
+      accuracy: number;
+      timestamp: number;
+      rulesetVersion?: number;
+      difficulty?: DifficultyLevel;
+      wpm?: number;
+      baseDamage?: number;
+      wavesCompleted?: number;
+      towerTypesUsed?: TowerType[];
+    }
+  >;
+  challengeHistory?: ChallengeCompletionRecord[];
   standardizedTestRecords?: Array<{
     rulesVersion?: number;
     durationSec: 30 | 60 | 120 | 0;

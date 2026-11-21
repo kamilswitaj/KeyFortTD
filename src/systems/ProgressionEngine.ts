@@ -323,7 +323,7 @@ export class ProgressionEngine {
     for (const hc of heroChecks) {
       if (hc.cond && !profile.unlockedHeroes.includes(hc.hero)) {
         profile.unlockedHeroes.push(hc.hero);
-        if (!profile.selectedHeroId) {
+        if (!profile.selectedHeroId && !profile.explicitNoHero) {
           profile.selectedHeroId = hc.hero;
         }
       }

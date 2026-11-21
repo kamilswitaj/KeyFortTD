@@ -6,7 +6,11 @@ import { BattlefieldRenderer } from '../rendering/BattlefieldRenderer';
 import { AudioSystem } from '../services/AudioSystem';
 import { PersistenceService } from '../services/PersistenceService';
 import { AchievementSystem } from '../systems/AchievementSystem';
-import { ChallengeEngine } from '../systems/ChallengeEngine';
+import {
+  ChallengeEngine,
+  ChallengeSessionConfig,
+  ChallengeTier,
+} from '../systems/ChallengeEngine';
 import { GameSessionEngine } from '../systems/GameSessionEngine';
 import { MissionOutcomeEvaluation, ProgressionEngine } from '../systems/ProgressionEngine';
 import {
@@ -14,6 +18,7 @@ import {
   FamilySortMetric,
   StatisticsEngine,
 } from '../systems/StatisticsEngine';
+import { TechnologySystem } from '../systems/TechnologySystem';
 import { TrainingAcademyEngine, TrainingActivityKind } from '../systems/TrainingAcademyEngine';
 import { WaveSystem } from '../systems/WaveSystem';
 import {
@@ -105,6 +110,8 @@ export class AppController {
     lastResult: null,
   };
   private trainingTickIntervalId: number | null = null;
+  private selectedChallengeTier: ChallengeTier | null = null;
+  private lastChallengeConfig: ChallengeSessionConfig | null = null;
   private trainingLastTickMs = 0;
 
   constructor(container: HTMLElement) {
@@ -269,6 +276,62 @@ export class AppController {
     this.newlyUnlockedAchievements = [];
     this.currentScreen = 'gameplay';
     this.renderCurrentScreen();
+    this.audio.startMusic(mission.isBossMission ? 'boss' : 'combat');
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo(0, 0);
+    }
+    this.startGameLoop();
+  }
+
+  public startChallenge(frequency: 'daily' | 'weekly', tier?: ChallengeTier): void {
+    const profile = this.persistence.getActiveProfile();
+    const chosenTier = tier ?? this.selectedChallengeTier ?? ChallengeEngine.getPlayerEligibleTier(profile);
+    if (!ChallengeEngine.isTierEligible(profile, chosenTier)) {
+      return;
+    }
+
+    const challenge =
+      frequency === 'weekly'
+        ? ChallengeEngine.getWeeklyChallenge(chosenTier)
+        : ChallengeEngine.getDailyChallenge(chosenTier);
+    const challengeConfig = ChallengeEngine.buildChallengeSessionConfig(
+      challenge,
+      profile.settings.difficulty
+    );
+    this.launchChallengeFromConfig(challengeConfig);
+  }
+
+  public launchChallengeFromConfig(challengeConfig: ChallengeSessionConfig): void {
+    const profile = this.persistence.getActiveProfile();
+    const baseMission = getMissionById(challengeConfig.sourceMissionId) ?? MISSIONS_DATA[0];
+
+    this.finishTrainingOrAssessment(true, false);
+    if (this.activeSession && !this.activeSession.isFinalized()) {
+      this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
+    }
+    this.persistence.flushSave();
+    this.stopGameLoop();
+
+    this.lastChallengeConfig = challengeConfig;
+    this.activeSession = new GameSessionEngine({
+      mode: 'challenge',
+      mission: baseMission,
+      sourceMissionId: baseMission.id,
+      profile,
+      challengeConfig,
+      initialGameSpeed: profile.settings.defaultGameSpeed,
+    });
+
+    this.activeSession.setSelectedPadIndex(0);
+    this.sessionOutcomeProcessed = false;
+    this.lastFollowUpState = false;
+    this.hadActiveErrorHighlight = false;
+    this.lastHudSnapshot = null;
+    this.lastOutcome = null;
+    this.newlyUnlockedAchievements = [];
+    this.currentScreen = 'gameplay';
+    this.renderCurrentScreen();
+    this.audio.startMusic(baseMission.isBossMission ? 'boss' : 'combat');
     if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
       window.scrollTo(0, 0);
     }
@@ -414,6 +477,58 @@ export class AppController {
           maxCombo: typing.getMaxCombo(),
           activeTowers: session.getTowers(),
         });
+      } else if (session.mode === 'challenge' && session.challengeConfig) {
+        const evalRes = ChallengeEngine.evaluateChallengeCompletion(session.challengeConfig, {
+          remainingLives: session.getLives(),
+          cumulativeBaseDamage: session.getCumulativeBaseDamage(),
+          correctChars: charsTyped,
+          accuracy: typing.getAccuracy(),
+          usedTowerTypes: session.getUsedTowerTypes(),
+        });
+        status = evalRes.passed ? 'victory' : 'defeat';
+        stars = evalRes.passed ? 3 : 0;
+        if (evalRes.passed) {
+          this.audio.playVictory();
+        } else {
+          this.audio.playDefeat();
+        }
+        const { awardedTechPoints } = ChallengeEngine.recordChallengeCompletion(
+          ownerProfile,
+          session.challengeConfig,
+          {
+            challengeId: session.challengeConfig.challengeId,
+            rulesetVersion: session.challengeConfig.rulesetVersion,
+            profileId: ownerProfile.id,
+            timestamp: Date.now(),
+            difficulty: session.difficulty,
+            score: session.getScore(),
+            accuracy: typing.getAccuracy(),
+            correctChars: charsTyped,
+            errors,
+            durationSec,
+            wpm: typing.getWpm(),
+            baseDamage: session.getCumulativeBaseDamage(),
+            wavesCompleted: session.waveSystem.getCompletedWavesCount(),
+            towerTypesUsed: session.getUsedTowerTypes(),
+            heroId: null,
+            status: evalRes.passed ? 'completed' : 'failed',
+          }
+        );
+        this.lastOutcome = {
+          victory: evalRes.passed,
+          tacticalVictory: session.getLives() > 0,
+          educationalCompleted: evalRes.passed,
+          stars: evalRes.passed ? 3 : 0,
+          xpEarned: evalRes.passed ? 120 + awardedTechPoints * 50 : 30,
+          leveledUp: false,
+          newLevel: ownerProfile.level,
+          newlyUnlockedTowers: [],
+          keyObjectives: [],
+          masterySummary: [],
+          reasonPl: evalRes.reasonPl,
+          reasonEn: evalRes.reasonEn,
+        };
+        ProgressionEngine.awardXp(ownerProfile, this.lastOutcome.xpEarned);
       } else if (session.mode === 'survival') {
         status = 'defeat';
         const waveReached = session.waveSystem.getCompletedWavesCount();
@@ -687,6 +802,7 @@ export class AppController {
           this.updateGameplayHudInPlace();
         }
       }
+      this.audio.stopMusic();
       this.persistence.flushSave();
     });
 
@@ -1000,7 +1116,7 @@ export class AppController {
       case 'training_academy':
         return TrainingAcademyView.renderHtml(profile, allProfiles, this.trainingState, this.i18n);
       case 'challenges':
-        return ChallengesView.renderHtml(profile, this.i18n);
+        return ChallengesView.renderHtml(profile, allProfiles, this.selectedChallengeTier, this.i18n);
       case 'gameplay':
         return this.activeSession
           ? GameplayView.renderGameplayLayoutHtml(
@@ -1045,9 +1161,18 @@ export class AppController {
     );
 
     modalContainer.querySelector('[data-action="modal-back-map"]')?.addEventListener('click', () => {
+      this.audio.stopMusic();
       this.navigateTo('campaign_map');
     });
+    modalContainer.querySelector('[data-action="modal-back-challenges"]')?.addEventListener('click', () => {
+      this.audio.stopMusic();
+      this.navigateTo('challenges');
+    });
     modalContainer.querySelector('[data-action="modal-retry"]')?.addEventListener('click', () => {
+      if (session.mode === 'challenge' && session.challengeConfig) {
+        this.launchChallengeFromConfig(session.challengeConfig);
+        return;
+      }
       // Preserve original sourceMissionId, mode, and launchOptions for Survival & Sandbox retries!
       this.startMission(session.sourceMissionId, session.mode, session.launchOptions);
     });
@@ -1235,7 +1360,7 @@ export class AppController {
       const btn = this.container.querySelector<HTMLButtonElement>(`[data-hero-ability="${slot}"]`);
       if (!btn) continue;
       const cd = Math.ceil(hero.abilityCooldowns[slot]);
-      const disabled = session.getIsPaused() || session.isSessionOver() || cd > 0 || session.economy.getEnergy() < def.abilities[slot].energyCost;
+      const disabled = !session.canTriggerHeroAbility(slot);
       if (btn.disabled !== disabled) btn.disabled = disabled;
       const meta = btn.querySelector('.ability-btn-meta');
       const text = cd > 0 ? `${cd}s` : `${def.abilities[slot].energyCost}⚡`;
@@ -1662,12 +1787,46 @@ export class AppController {
     });
 
     // Challenges, Heroes & Tech Tree listeners
+    this.container.querySelectorAll('[data-challenge-tier]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const tier = (e.currentTarget as HTMLElement).getAttribute('data-challenge-tier') as ChallengeTier;
+        const profile = this.persistence.getActiveProfile();
+        if (ChallengeEngine.isTierEligible(profile, tier)) {
+          this.selectedChallengeTier = tier;
+          this.renderCurrentScreen();
+        }
+      });
+    });
+
+    this.container.querySelectorAll('[data-start-challenge]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const freq = (e.currentTarget as HTMLElement).getAttribute('data-start-challenge') as 'daily' | 'weekly';
+        const tier = (e.currentTarget as HTMLElement).getAttribute('data-challenge-tier') as ChallengeTier;
+        this.startChallenge(freq, tier);
+      });
+    });
+
+    this.container.querySelectorAll('[data-unlock-tech]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const techId = (e.currentTarget as HTMLElement).getAttribute('data-unlock-tech');
+        if (!techId) return;
+        const profile = this.persistence.getActiveProfile();
+        const res = TechnologySystem.purchaseTechnology(profile, techId);
+        if (res.success) {
+          this.audio.playUpgrade();
+          this.persistence.saveToStorage();
+          this.renderCurrentScreen();
+        }
+      });
+    });
+
     this.container.querySelectorAll('[data-select-hero]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const heroId = (e.currentTarget as HTMLElement).getAttribute('data-select-hero') as HeroId;
         const profile = this.persistence.getActiveProfile();
         if ((profile.unlockedHeroes ?? []).includes(heroId)) {
           profile.selectedHeroId = heroId;
+          profile.explicitNoHero = false;
           this.persistence.saveToStorage();
           this.renderCurrentScreen();
         }
@@ -1675,12 +1834,12 @@ export class AppController {
     });
 
     this.container.querySelector('[data-action="clear-hero"]')?.addEventListener('click', () => {
-      this.persistence.getActiveProfile().selectedHeroId = null;
+      const profile = this.persistence.getActiveProfile();
+      profile.selectedHeroId = null;
+      profile.explicitNoHero = true;
       this.persistence.saveToStorage();
       this.renderCurrentScreen();
     });
-
-    // Challenge and technology execution is not connected yet; preview only.
 
     // Family Dashboard listeners
     this.container.querySelectorAll('[data-sort-metric]').forEach((th) => {

@@ -1,6 +1,7 @@
 import { TOWERS_DATA } from '../data/towersData';
 import {
   ActiveEnemy,
+  ActiveHero,
   ActiveTower,
   FloatingTextEffect,
   Point2D,
@@ -9,6 +10,7 @@ import {
 import { EnemySystem } from './EnemySystem';
 import { PathSystem } from './PathSystem';
 import { ResourceEconomy } from './ResourceEconomy';
+import { TechModifiers } from './TechnologySystem';
 import { ComputedTowerStats, TowerSystem } from './TowerSystem';
 
 export interface CombatTickEvents {
@@ -29,9 +31,33 @@ export class CombatSystem {
     enemy: ActiveEnemy,
     rawDamage: number,
     stats: Partial<ComputedTowerStats>,
-    sourceTower?: ActiveTower
+    sourceTower?: ActiveTower,
+    events?: CombatTickEvents
   ): number {
     if (enemy.hp <= 0) return 0;
+
+    // Evasive units dodge every 4th single-target kinetic/projectile hit unless slowed or stunned
+    const isDodgeable =
+      sourceTower &&
+      (sourceTower.type === 'gun' ||
+        sourceTower.type === 'sniper' ||
+        sourceTower.type === 'drone' ||
+        sourceTower.type === 'command');
+    if (enemy.type === 'evasive' && isDodgeable && enemy.slowTimer <= 0 && enemy.stunTimer <= 0) {
+      enemy.evadeTimer = (enemy.evadeTimer ?? 0) + 1;
+      if (enemy.evadeTimer % 4 === 0) {
+        events?.floatingTextsCreated.push({
+          id: `dodge_${CombatSystem.effectIdCounter++}`,
+          x: enemy.x,
+          y: enemy.y - 12,
+          text: 'UNIK!',
+          color: '#e879f9',
+          life: 0.55,
+          maxLife: 0.55,
+        });
+        return 0;
+      }
+    }
 
     if (stats.detectsGhosts && enemy.isGhost) {
       enemy.isRevealed = true;
@@ -125,7 +151,8 @@ export class CombatSystem {
     towers: ActiveTower[],
     enemies: ActiveEnemy[],
     economy: ResourceEconomy,
-    currentCombo: number
+    currentCombo: number,
+    context?: { hero?: ActiveHero | null; techModifiers?: TechModifiers }
   ): CombatTickEvents {
     const events: CombatTickEvents = {
       projectilesCreated: [],
@@ -146,7 +173,7 @@ export class CombatSystem {
         continue;
       }
 
-      const stats = TowerSystem.computeEffectiveStats(tower, towers);
+      const stats = TowerSystem.computeEffectiveStats(tower, towers, context);
 
       if (tower.cooldownRemaining > 0) {
         tower.cooldownRemaining = Math.max(0, tower.cooldownRemaining - dtSec * efficiency);
@@ -301,7 +328,7 @@ export class CombatSystem {
           }
         }
         for (const tHit of targetsHit) {
-          CombatSystem.applyHitToEnemy(tHit, effectiveDamage, stats, tower);
+          CombatSystem.applyHitToEnemy(tHit, effectiveDamage, stats, tower, events);
           if (stats.splashRadius > 0) {
             for (const extra of enemies) {
               if (extra.id === tHit.id || extra.hp <= 0) continue;
@@ -359,7 +386,7 @@ export class CombatSystem {
           ...stats,
           spotterDamageBonus: Math.max(0.2, stats.spotterDamageBonus),
         };
-        CombatSystem.applyHitToEnemy(target, effectiveDamage, cmdStats, tower);
+        CombatSystem.applyHitToEnemy(target, effectiveDamage, cmdStats, tower, events);
         events.projectilesCreated.push({
           id: `proj_${CombatSystem.effectIdCounter++}`,
           kind: 'bullet',
@@ -413,7 +440,7 @@ export class CombatSystem {
           duration: 0.22,
         });
       } else if (tower.type === 'sniper') {
-        const dmgApplied = CombatSystem.applyHitToEnemy(target, effectiveDamage, stats, tower);
+        const dmgApplied = CombatSystem.applyHitToEnemy(target, effectiveDamage, stats, tower, events);
         if (dmgApplied >= 85) {
           events.floatingTextsCreated.push({
             id: `ft_${CombatSystem.effectIdCounter++}`,
@@ -451,7 +478,7 @@ export class CombatSystem {
         });
       } else {
         // Gun tower (+ optional ricochets)
-        CombatSystem.applyHitToEnemy(target, effectiveDamage, stats, tower);
+        CombatSystem.applyHitToEnemy(target, effectiveDamage, stats, tower, events);
         if (stats.ricochetCount > 0) {
           let bounced = 0;
           for (const other of enemies) {
