@@ -897,9 +897,9 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
       });
       if (w >= 2) {
         groups.push({
-          enemyType: missionIndex >= 3 ? 'regenerator' : 'tank',
+          enemyType: missionIndex >= 4 && w === 2 ? 'evasive' : missionIndex >= 3 ? 'regenerator' : 'tank',
           count: 1 + Math.floor(w / 2),
-          intervalSec: 2.5,
+          intervalSec: 2.4,
           delayBeforeSec: 2.0,
           hpScale: waveScale,
         });
@@ -912,7 +912,15 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
         delayBeforeSec: 0.5,
         hpScale: waveScale,
       });
-      if (missionIndex >= 2 && w >= 2) {
+      if (missionIndex >= 3 && w === 3) {
+        groups.push({
+          enemyType: 'hover',
+          count: 3,
+          intervalSec: 1.7,
+          delayBeforeSec: 1.8,
+          hpScale: waveScale,
+        });
+      } else if (missionIndex >= 2 && w >= 2) {
         groups.push({
           enemyType: 'ghost',
           count: 1 + Math.floor(w / 2),
@@ -938,7 +946,7 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
         hpScale: waveScale,
       });
       groups.push({
-        enemyType: w % 2 === 0 ? 'tank' : 'shield',
+        enemyType: missionIndex >= 3 && w >= 3 ? 'armored_elite' : w % 2 === 0 ? 'tank' : 'shield',
         count: 2 + Math.floor(w / 2),
         intervalSec: 2.2,
         delayBeforeSec: 2.0,
@@ -946,7 +954,19 @@ function buildWavesForMission(worldId: number, missionIndex: number, globalIndex
       });
     } else {
       // Worlds 5..8: rich tactical mix with archetype-appropriate squad sizes
-      const pool: EnemyType[] = ['scout', 'swarm', 'shield', 'tank', 'ghost', 'splitter', 'regenerator'];
+      const pool: EnemyType[] = [
+        'scout',
+        'swarm',
+        'shield',
+        'tank',
+        'ghost',
+        'splitter',
+        'regenerator',
+        'evasive',
+        'hover',
+        'armored_elite',
+        'support',
+      ];
       let primary = pool[(globalIndex + w) % pool.length];
       if (w === 1 && primary === 'ghost') {
         primary = 'shield';

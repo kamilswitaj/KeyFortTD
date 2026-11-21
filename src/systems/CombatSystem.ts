@@ -1,6 +1,7 @@
 import { TOWERS_DATA } from '../data/towersData';
 import {
   ActiveEnemy,
+  ActiveHero,
   ActiveTower,
   FloatingTextEffect,
   Point2D,
@@ -9,6 +10,7 @@ import {
 import { EnemySystem } from './EnemySystem';
 import { PathSystem } from './PathSystem';
 import { ResourceEconomy } from './ResourceEconomy';
+import { TechModifiers } from './TechnologySystem';
 import { ComputedTowerStats, TowerSystem } from './TowerSystem';
 
 export interface CombatTickEvents {
@@ -29,9 +31,33 @@ export class CombatSystem {
     enemy: ActiveEnemy,
     rawDamage: number,
     stats: Partial<ComputedTowerStats>,
-    sourceTower?: ActiveTower
+    sourceTower?: ActiveTower,
+    events?: CombatTickEvents
   ): number {
     if (enemy.hp <= 0) return 0;
+
+    // Evasive units dodge every 4th single-target kinetic/projectile hit unless slowed or stunned
+    const isDodgeable =
+      sourceTower &&
+      (sourceTower.type === 'gun' ||
+        sourceTower.type === 'sniper' ||
+        sourceTower.type === 'drone' ||
+        sourceTower.type === 'command');
+    if (enemy.type === 'evasive' && isDodgeable && enemy.slowTimer <= 0 && enemy.stunTimer <= 0) {
+      enemy.evadeTimer = (enemy.evadeTimer ?? 0) + 1;
+      if (enemy.evadeTimer % 4 === 0) {
+        events?.floatingTextsCreated.push({
+          id: `dodge_${CombatSystem.effectIdCounter++}`,
+          x: enemy.x,
+          y: enemy.y - 12,
+          text: 'UNIK!',
+          color: '#e879f9',
+          life: 0.55,
+          maxLife: 0.55,
+        });
+        return 0;
+      }
+    }
 
     if (stats.detectsGhosts && enemy.isGhost) {
       enemy.isRevealed = true;
@@ -104,6 +130,8 @@ export class CombatSystem {
       enemy.regenDisabledTimer = Math.max(enemy.regenDisabledTimer, 5.0);
     }
 
+    enemy.hitFlashTimer = 0.12;
+
     const rounded = Math.round(totalApplied);
     if (sourceTower) {
       sourceTower.totalDamageDealt += rounded;
@@ -123,7 +151,8 @@ export class CombatSystem {
     towers: ActiveTower[],
     enemies: ActiveEnemy[],
     economy: ResourceEconomy,
-    currentCombo: number
+    currentCombo: number,
+    context?: { hero?: ActiveHero | null; techModifiers?: TechModifiers }
   ): CombatTickEvents {
     const events: CombatTickEvents = {
       projectilesCreated: [],
@@ -144,7 +173,7 @@ export class CombatSystem {
         continue;
       }
 
-      const stats = TowerSystem.computeEffectiveStats(tower, towers);
+      const stats = TowerSystem.computeEffectiveStats(tower, towers, context);
 
       if (tower.cooldownRemaining > 0) {
         tower.cooldownRemaining = Math.max(0, tower.cooldownRemaining - dtSec * efficiency);
@@ -160,6 +189,9 @@ export class CombatSystem {
 
       // Consume energy if available; if energy is 0, tower still fires at baseline efficiency!
       const hadEnergy = economy.drainTowerShotEnergy(stats.energyPerShot);
+      if (hadEnergy) {
+        tower.energyConsumed = Number(((tower.energyConsumed ?? 0) + stats.energyPerShot).toFixed(2));
+      }
       const shotDamageMultiplier = hadEnergy
         ? efficiency >= 1.3
           ? 1.22
@@ -185,6 +217,19 @@ export class CombatSystem {
           const dist = Math.hypot(enemy.x - tower.x, enemy.y - tower.y);
           if (dist <= stats.range + enemy.radius) {
             CombatSystem.applyHitToEnemy(enemy, effectiveDamage, stats, tower);
+            if (enemy.burnTimer > 0 && (enemy.thermalShockCooldown ?? 0) <= 0) {
+              enemy.thermalShockCooldown = 2.5;
+              CombatSystem.applyHitToEnemy(enemy, 35, { armorShredPercent: 0.5 }, tower);
+              events.floatingTextsCreated.push({
+                id: `ft_${CombatSystem.effectIdCounter++}`,
+                x: enemy.x,
+                y: enemy.y - 16,
+                text: 'THERMAL!',
+                color: '#fb923c',
+                life: 0.65,
+                maxLife: 0.65,
+              });
+            }
           }
         }
         events.projectilesCreated.push({
@@ -200,14 +245,20 @@ export class CombatSystem {
           duration: 0.32,
         });
       } else if (tower.type === 'cannon') {
-        // Splash explosion around target
+        // Splash explosion around target (+ Shatter Blast synergy vs slowed enemies)
         for (const enemy of enemies) {
-          if (enemy.hp <= 0) continue;
+          if (enemy.hp <= 0 || enemy.isFlying) continue;
           if (enemy.isGhost && !enemy.isRevealed && !stats.detectsGhosts) continue;
           const dist = Math.hypot(enemy.x - target.x, enemy.y - target.y);
           if (dist <= stats.splashRadius + enemy.radius) {
             const falloff = dist <= 18 ? 1.0 : 0.8;
-            CombatSystem.applyHitToEnemy(enemy, Math.round(effectiveDamage * falloff), stats, tower);
+            const shatterMult = enemy.slowTimer > 0 ? 1.25 : 1.0;
+            CombatSystem.applyHitToEnemy(
+              enemy,
+              Math.round(effectiveDamage * falloff * shatterMult),
+              stats,
+              tower
+            );
           }
         }
         events.projectilesCreated.push({
@@ -221,6 +272,131 @@ export class CombatSystem {
           radius: stats.splashRadius,
           progress: 0,
           duration: 0.25,
+        });
+      } else if (tower.type === 'flame') {
+        // Continuous fire cone/splash around target; applies base burn + stops regen + Thermal Shock
+        const flameStats = {
+          ...stats,
+          burnDps: Math.max(10, stats.burnDps),
+          burnDuration: Math.max(2.5, stats.burnDuration),
+          disableRegen: true,
+        };
+        for (const enemy of enemies) {
+          if (enemy.hp <= 0 || enemy.isFlying) continue;
+          if (enemy.isGhost && !enemy.isRevealed && !stats.detectsGhosts) continue;
+          const dist = Math.hypot(enemy.x - target.x, enemy.y - target.y);
+          if (dist <= stats.splashRadius + enemy.radius) {
+            CombatSystem.applyHitToEnemy(enemy, effectiveDamage, flameStats, tower);
+            if (enemy.slowTimer > 0 && (enemy.thermalShockCooldown ?? 0) <= 0) {
+              enemy.thermalShockCooldown = 2.5;
+              CombatSystem.applyHitToEnemy(enemy, 35, { armorShredPercent: 0.5 }, tower);
+              events.floatingTextsCreated.push({
+                id: `ft_${CombatSystem.effectIdCounter++}`,
+                x: enemy.x,
+                y: enemy.y - 16,
+                text: 'THERMAL!',
+                color: '#67e8f9',
+                life: 0.65,
+                maxLife: 0.65,
+              });
+            }
+          }
+        }
+        events.projectilesCreated.push({
+          id: `proj_${CombatSystem.effectIdCounter++}`,
+          kind: 'flame',
+          fromX: tower.x,
+          fromY: tower.y,
+          toX: target.x,
+          toY: target.y,
+          color: def.color,
+          radius: stats.splashRadius,
+          progress: 0,
+          duration: 0.18,
+        });
+      } else if (tower.type === 'drone') {
+        // Long-range drone strikes (primary + optional chainCount bonus target)
+        const targetsHit: ActiveEnemy[] = [target];
+        if (stats.chainCount > 1) {
+          for (const candidate of enemies) {
+            if (targetsHit.length >= stats.chainCount) break;
+            if (candidate.id === target.id || candidate.hp <= 0) continue;
+            if (candidate.isGhost && !candidate.isRevealed && !stats.detectsGhosts) continue;
+            if (Math.hypot(candidate.x - tower.x, candidate.y - tower.y) <= stats.range + candidate.radius) {
+              targetsHit.push(candidate);
+            }
+          }
+        }
+        for (const tHit of targetsHit) {
+          CombatSystem.applyHitToEnemy(tHit, effectiveDamage, stats, tower, events);
+          if (stats.splashRadius > 0) {
+            for (const extra of enemies) {
+              if (extra.id === tHit.id || extra.hp <= 0) continue;
+              if (Math.hypot(extra.x - tHit.x, extra.y - tHit.y) <= stats.splashRadius) {
+                CombatSystem.applyHitToEnemy(extra, Math.round(effectiveDamage * 0.65), stats, tower);
+              }
+            }
+          }
+          events.projectilesCreated.push({
+            id: `proj_${CombatSystem.effectIdCounter++}`,
+            kind: 'drone_bolt',
+            fromX: tower.x,
+            fromY: tower.y,
+            toX: tHit.x,
+            toY: tHit.y,
+            color: def.color,
+            progress: 0,
+            duration: 0.2,
+          });
+        }
+      } else if (tower.type === 'laser') {
+        // Focusing beam: ramps +18% per consecutive hit on the same target (capped at +110%)
+        if (tower.lastTargetId === target.id) {
+          tower.consecutiveHitsOnTarget = Math.min(6, tower.consecutiveHitsOnTarget + 1);
+        } else {
+          tower.lastTargetId = target.id;
+          tower.consecutiveHitsOnTarget = 0;
+        }
+        const rampMult = 1 + tower.consecutiveHitsOnTarget * 0.18;
+        const beamDmg = Math.round(effectiveDamage * rampMult);
+        CombatSystem.applyHitToEnemy(target, beamDmg, stats, tower);
+        if (stats.chainCount > 1) {
+          for (const candidate of enemies) {
+            if (candidate.id === target.id || candidate.hp <= 0) continue;
+            if (Math.hypot(candidate.x - target.x, candidate.y - target.y) <= 95) {
+              CombatSystem.applyHitToEnemy(candidate, Math.round(beamDmg * 0.6), stats, tower);
+              break;
+            }
+          }
+        }
+        events.projectilesCreated.push({
+          id: `proj_${CombatSystem.effectIdCounter++}`,
+          kind: 'laser_beam',
+          fromX: tower.x,
+          fromY: tower.y,
+          toX: target.x,
+          toY: target.y,
+          color: def.color,
+          progress: 0,
+          duration: 0.16,
+        });
+      } else if (tower.type === 'command') {
+        // Marks target with spotter vulnerability + fires tactical bolt
+        const cmdStats = {
+          ...stats,
+          spotterDamageBonus: Math.max(0.2, stats.spotterDamageBonus),
+        };
+        CombatSystem.applyHitToEnemy(target, effectiveDamage, cmdStats, tower, events);
+        events.projectilesCreated.push({
+          id: `proj_${CombatSystem.effectIdCounter++}`,
+          kind: 'bullet',
+          fromX: tower.x,
+          fromY: tower.y,
+          toX: target.x,
+          toY: target.y,
+          color: def.color,
+          progress: 0,
+          duration: 0.16,
         });
       } else if (tower.type === 'tesla') {
         // Chain lightning across up to stats.chainCount targets
@@ -264,7 +440,7 @@ export class CombatSystem {
           duration: 0.22,
         });
       } else if (tower.type === 'sniper') {
-        const dmgApplied = CombatSystem.applyHitToEnemy(target, effectiveDamage, stats, tower);
+        const dmgApplied = CombatSystem.applyHitToEnemy(target, effectiveDamage, stats, tower, events);
         if (dmgApplied >= 85) {
           events.floatingTextsCreated.push({
             id: `ft_${CombatSystem.effectIdCounter++}`,
@@ -302,7 +478,7 @@ export class CombatSystem {
         });
       } else {
         // Gun tower (+ optional ricochets)
-        CombatSystem.applyHitToEnemy(target, effectiveDamage, stats, tower);
+        CombatSystem.applyHitToEnemy(target, effectiveDamage, stats, tower, events);
         if (stats.ricochetCount > 0) {
           let bounced = 0;
           for (const other of enemies) {

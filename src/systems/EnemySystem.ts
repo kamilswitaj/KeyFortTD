@@ -2,6 +2,30 @@ import { ENEMIES_DATA, WORLD_BOSS_META } from '../data/enemiesData';
 import { ActiveEnemy, EnemyType } from '../types';
 import { PathSystem } from './PathSystem';
 
+const BOSS_PHASE_CONFIGS: Record<
+  number,
+  {
+    phase2Minions: EnemyType[];
+    phase3Minions: EnemyType[];
+    phase2ShieldRatio: number;
+    phase3ShieldRatio: number;
+    phase2SpeedMult: number;
+    phase3SpeedMult: number;
+    armorBonusPhase3?: number;
+    spectralPhase3?: boolean;
+    regenBoostPhase2?: number;
+  }
+> = {
+  1: { phase2Minions: ['scout', 'scout'], phase3Minions: ['shield'], phase2ShieldRatio: 0.6, phase3ShieldRatio: 0.75, phase2SpeedMult: 1.12, phase3SpeedMult: 1.25 },
+  2: { phase2Minions: ['ghost', 'scout'], phase3Minions: ['ghost', 'ghost'], phase2ShieldRatio: 0.55, phase3ShieldRatio: 0.7, phase2SpeedMult: 1.15, phase3SpeedMult: 1.25, regenBoostPhase2: 6 },
+  3: { phase2Minions: ['evasive', 'scout'], phase3Minions: ['hover', 'shield'], phase2ShieldRatio: 0.65, phase3ShieldRatio: 0.85, phase2SpeedMult: 1.18, phase3SpeedMult: 1.38 },
+  4: { phase2Minions: ['swarm', 'swarm', 'swarm'], phase3Minions: ['armored_elite', 'swarm'], phase2ShieldRatio: 0.55, phase3ShieldRatio: 0.75, phase2SpeedMult: 1.15, phase3SpeedMult: 1.32, armorBonusPhase3: 0.1 },
+  5: { phase2Minions: ['shield', 'hover'], phase3Minions: ['armored_elite', 'shield'], phase2ShieldRatio: 0.8, phase3ShieldRatio: 0.95, phase2SpeedMult: 1.1, phase3SpeedMult: 1.22 },
+  6: { phase2Minions: ['splitter', 'ghost'], phase3Minions: ['splitter', 'splitter'], phase2ShieldRatio: 0.6, phase3ShieldRatio: 0.8, phase2SpeedMult: 1.14, phase3SpeedMult: 1.28, spectralPhase3: true },
+  7: { phase2Minions: ['support', 'armored_elite'], phase3Minions: ['support', 'tank'], phase2ShieldRatio: 0.65, phase3ShieldRatio: 0.85, phase2SpeedMult: 1.12, phase3SpeedMult: 1.26, armorBonusPhase3: 0.12 },
+  8: { phase2Minions: ['armored_elite', 'hover', 'support'], phase3Minions: ['armored_elite', 'splitter', 'ghost'], phase2ShieldRatio: 0.75, phase3ShieldRatio: 0.95, phase2SpeedMult: 1.18, phase3SpeedMult: 1.35 },
+};
+
 export class EnemySystem {
   private static nextIdCounter = 1;
 
@@ -72,6 +96,10 @@ export class EnemySystem {
       brittleTimer: 0,
       spotterBonus: 0,
       spotterTimer: 0,
+      isFlying: Boolean(def.isFlying),
+      hitFlashTimer: 0,
+      thermalShockCooldown: 0,
+      evadeTimer: 0,
     };
   }
 
@@ -138,32 +166,47 @@ export class EnemySystem {
       enemy.spotterTimer = Math.max(0, enemy.spotterTimer - dtSec);
       if (enemy.spotterTimer === 0) enemy.spotterBonus = 0;
     }
+    if (enemy.hitFlashTimer && enemy.hitFlashTimer > 0) {
+      enemy.hitFlashTimer = Math.max(0, enemy.hitFlashTimer - dtSec);
+    }
+    if (enemy.thermalShockCooldown && enemy.thermalShockCooldown > 0) {
+      enemy.thermalShockCooldown = Math.max(0, enemy.thermalShockCooldown - dtSec);
+    }
 
-    // Multi-phase Boss mechanics
+    // Multi-phase data-driven Boss mechanics
     if (enemy.isBoss) {
+      const cfg = BOSS_PHASE_CONFIGS[enemy.bossWorldId ?? 1] ?? BOSS_PHASE_CONFIGS[1];
       const hpRatio = enemy.hp / enemy.maxHp;
       if (enemy.bossPhase === 1 && hpRatio <= 0.66) {
         enemy.bossPhase = 2;
         bossPhaseTriggered = 2;
-        enemy.shield = Math.max(enemy.shield, Math.round(enemy.maxShield * 0.65));
-        enemy.speed = enemy.baseSpeed * 1.15;
-        // Spawn 2 escort scouts
-        spawnedMinions.push(
-          EnemySystem.createEnemy('scout', path, Math.max(1, enemy.maxHp / 800), Math.max(0, enemy.pathProgress - 22)),
-          EnemySystem.createEnemy('scout', path, Math.max(1, enemy.maxHp / 800), Math.min(path.getTotalLength() - 15, enemy.pathProgress + 22))
-        );
+        enemy.shield = Math.max(enemy.shield, Math.round(enemy.maxShield * cfg.phase2ShieldRatio));
+        enemy.speed = enemy.baseSpeed * cfg.phase2SpeedMult;
+        if (cfg.regenBoostPhase2) {
+          enemy.regenPerSec += cfg.regenBoostPhase2;
+        }
+        cfg.phase2Minions.forEach((mType, idx) => {
+          const offset = (idx - 0.5) * 24;
+          const dist = Math.max(0, Math.min(path.getTotalLength() - 15, enemy.pathProgress + offset));
+          spawnedMinions.push(EnemySystem.createEnemy(mType, path, Math.max(1, enemy.maxHp / 850), dist));
+        });
       } else if (enemy.bossPhase === 2 && hpRatio <= 0.33) {
         enemy.bossPhase = 3;
         bossPhaseTriggered = 3;
-        enemy.shield = Math.max(enemy.shield, Math.round(enemy.maxShield * 0.8));
-        enemy.speed = enemy.baseSpeed * 1.3;
-        if (enemy.bossWorldId === 6) {
+        enemy.shield = Math.max(enemy.shield, Math.round(enemy.maxShield * cfg.phase3ShieldRatio));
+        enemy.speed = enemy.baseSpeed * cfg.phase3SpeedMult;
+        if (cfg.armorBonusPhase3) {
+          enemy.armor = Math.min(0.75, enemy.armor + cfg.armorBonusPhase3);
+        }
+        if (cfg.spectralPhase3) {
           enemy.isGhost = true;
           enemy.isRevealed = false;
         }
-        spawnedMinions.push(
-          EnemySystem.createEnemy('shield', path, Math.max(1, enemy.maxHp / 900), Math.max(0, enemy.pathProgress - 25))
-        );
+        cfg.phase3Minions.forEach((mType, idx) => {
+          const offset = (idx - 0.5) * 26;
+          const dist = Math.max(0, Math.min(path.getTotalLength() - 15, enemy.pathProgress + offset));
+          spawnedMinions.push(EnemySystem.createEnemy(mType, path, Math.max(1, enemy.maxHp / 900), dist));
+        });
       }
     }
 
@@ -184,5 +227,31 @@ export class EnemySystem {
       spawnedMinions,
       bossPhaseTriggered,
     };
+  }
+
+  /**
+   * Applies non-stacking, capped healing aura from active Field Catalyst (`support`) enemies.
+   * Never resurrects dead enemies and stops when stunned or regen-disabled.
+   */
+  public static applySupportAuras(enemies: ActiveEnemy[], dtSec: number): void {
+    const auraRadius = 95;
+    const healPerSec = 9;
+    const healedIds = new Set<string>();
+
+    for (const sup of enemies) {
+      if (sup.type !== 'support' || sup.hp <= 0 || sup.stunTimer > 0 || sup.regenDisabledTimer > 0) {
+        continue;
+      }
+      for (const ally of enemies) {
+        if (ally.id === sup.id || ally.hp <= 0 || ally.hp >= ally.maxHp || healedIds.has(ally.id)) {
+          continue;
+        }
+        if (ally.regenDisabledTimer > 0) continue;
+        if (Math.hypot(ally.x - sup.x, ally.y - sup.y) <= auraRadius) {
+          ally.hp = Math.min(ally.maxHp, ally.hp + healPerSec * dtSec);
+          healedIds.add(ally.id);
+        }
+      }
+    }
   }
 }

@@ -3,11 +3,13 @@ import { MAPS_DATA } from '../data/mapsData';
 import { TOWERS_DATA } from '../data/towersData';
 import {
   ActiveEnemy,
+  ActiveHero,
   ActiveTower,
   DifficultyLevel,
   EnemyType,
   FloatingTextEffect,
   GameMode,
+  HeroId,
   KeyLessonObjective,
   MapDefinition,
   MissionDefinition,
@@ -19,11 +21,15 @@ import {
   WaveDefinition,
 } from '../types';
 import { AdaptiveLearningEngine } from './AdaptiveLearningEngine';
+import { ChallengeEngine, ChallengeSessionConfig } from './ChallengeEngine';
 import { CombatSystem } from './CombatSystem';
 import { EnemySystem } from './EnemySystem';
+import { HeroSystem } from './HeroSystem';
 import { PathSystem } from './PathSystem';
 import { ProgressionEngine } from './ProgressionEngine';
+import { RenderEffectSystem } from './RenderEffectSystem';
 import { PowerState, ResourceEconomy } from './ResourceEconomy';
+import { TechModifiers, TechnologySystem } from './TechnologySystem';
 import { TowerSystem } from './TowerSystem';
 import { KeystrokeResult, TypingEngine } from './TypingEngine';
 import { WaveSystem } from './WaveSystem';
@@ -37,6 +43,7 @@ export interface GameSessionConfig {
   unlimitedEnergy?: boolean;
   customAllowedKeys?: string[];
   initialGameSpeed?: number;
+  challengeConfig?: ChallengeSessionConfig;
 }
 
 export interface WaveEnemyPreviewItem {
@@ -60,7 +67,11 @@ const ENEMY_COUNTER_META: Record<
   swarm: { traitPl: 'Liczny Rój', traitEn: 'Dense Swarm', counterTower: 'cannon' },
   ghost: { traitPl: 'Widmo (wymaga detekcji)', traitEn: 'Stealth Ghost', counterTower: 'tesla' },
   splitter: { traitPl: 'Dzieli się po zniszczeniu', traitEn: 'Splits on Death', counterTower: 'frost' },
-  regenerator: { traitPl: 'Regeneruje HP', traitEn: 'Regenerates HP', counterTower: 'cannon' },
+  regenerator: { traitPl: 'Regeneruje HP', traitEn: 'Regenerates HP', counterTower: 'flame' },
+  armored_elite: { traitPl: 'Ciężki Pancerz', traitEn: 'Heavy Armor', counterTower: 'laser' },
+  evasive: { traitPl: 'Unika pocisków', traitEn: 'Projectile Dodge', counterTower: 'tesla' },
+  hover: { traitPl: 'Jednostka Latająca', traitEn: 'Flying Hover', counterTower: 'drone' },
+  support: { traitPl: 'Leczy Sojuszników', traitEn: 'Heals Allies', counterTower: 'sniper' },
   boss: { traitPl: 'Wielofazowy Boss', traitEn: 'Multi-Phase Boss', counterTower: 'sniper' },
 };
 
@@ -83,10 +94,16 @@ export class GameSessionEngine {
   public readonly economy: ResourceEconomy;
   public readonly waveSystem: WaveSystem;
   public readonly typingEngine: TypingEngine;
+  public readonly renderEffects: RenderEffectSystem = new RenderEffectSystem();
+  public readonly challengeConfig: ChallengeSessionConfig | null = null;
+  public readonly techModifiers: TechModifiers;
 
   private profile: PlayerProfile;
   private finalized: boolean = false;
+  private hero: ActiveHero | null = null;
   private towers: ActiveTower[] = [];
+  private usedTowerTypes: Set<TowerType> = new Set<TowerType>();
+  private cumulativeBaseDamage: number = 0;
   private enemies: ActiveEnemy[] = [];
   private projectiles: ProjectileEffect[] = [];
   private floatingTexts: FloatingTextEffect[] = [];
@@ -121,20 +138,70 @@ export class GameSessionEngine {
       customAllowedKeys: config.customAllowedKeys,
     };
     this.mode = config.mode;
-    this.mission = config.mission;
+    this.challengeConfig = config.challengeConfig ?? null;
+    this.mission = this.challengeConfig
+      ? {
+          ...config.mission,
+          mapId: this.challengeConfig.mapId,
+          allowedKeys: [...this.challengeConfig.allowedKeys],
+          waves: this.challengeConfig.waves,
+          startingGold: this.challengeConfig.startingGold,
+          startingLives: this.challengeConfig.startingLives,
+          requiredTypedChars: this.challengeConfig.completionCriteria.minTypedChars,
+          targetAccuracy: this.challengeConfig.completionCriteria.targetAccuracy,
+        }
+      : config.mission;
+
+    this.difficulty = this.challengeConfig?.difficulty ?? config.profile.settings.difficulty ?? 'standard';
     this.profile = config.mode === 'sandbox' ? structuredClone(config.profile) : config.profile;
-    this.map = MAPS_DATA[config.mission.mapId] ?? MAPS_DATA.green_valley_1;
+    this.map = MAPS_DATA[this.mission.mapId] ?? MAPS_DATA.green_valley_1;
     this.path = new PathSystem(this.map.waypoints);
 
-    this.lives = config.mission.startingLives;
-    this.maxLives = config.mission.startingLives;
+    // Compute centralized technology modifiers (disabled in competitive challenges and sandbox)
+    const techDisabled =
+      config.mode === 'challenge' ||
+      config.mode === 'sandbox' ||
+      (this.challengeConfig !== null && !this.challengeConfig.techAllowed);
+    this.techModifiers = TechnologySystem.computeTechModifiers(config.profile.unlockedTechs ?? [], {
+      disabled: techDisabled,
+      disableDefenseInNoLeak: this.challengeConfig?.kind === 'no_leak',
+    });
 
-    this.economy = new ResourceEconomy(config.mission.startingGold, 50);
-    if (config.unlimitedGold || config.unlimitedEnergy) {
+    this.lives = this.mission.startingLives + this.techModifiers.startingLivesBonus;
+    this.maxLives = this.lives;
+
+    const chosenHeroId = config.profile.selectedHeroId ?? null;
+    const heroEligible =
+      chosenHeroId &&
+      (!this.challengeConfig || this.challengeConfig.heroAllowed) &&
+      (config.mode === 'sandbox' || (config.profile.unlockedHeroes ?? []).includes(chosenHeroId)) &&
+      (config.mode !== 'campaign' || this.mission.globalIndex >= 4);
+
+    if (heroEligible && chosenHeroId) {
+      const endWp = this.map.waypoints[this.map.waypoints.length - 1] ?? { x: 820, y: 200 };
+      const anchor = {
+        x: Math.max(80, Math.min(860, endWp.x - 95)),
+        y: Math.max(60, Math.min(340, endWp.y + (endWp.y > 200 ? -55 : 55))),
+      };
+      this.hero = HeroSystem.createActiveHero(chosenHeroId, anchor);
+      if (chosenHeroId === 'guardian') {
+        this.lives += 2;
+        this.maxLives += 2;
+      }
+    }
+
+    const startEnergy =
+      (this.challengeConfig ? this.challengeConfig.startingEnergy : 50) +
+      this.techModifiers.startingEnergyBonus;
+    this.economy = new ResourceEconomy(this.mission.startingGold, startEnergy);
+    if (this.hero?.id === 'engineer') {
+      this.economy.setBonusMaxEnergy(15);
+    }
+    if (!this.challengeConfig && (config.unlimitedGold || config.unlimitedEnergy)) {
       this.economy.setUnlimitedResources(Boolean(config.unlimitedGold), Boolean(config.unlimitedEnergy));
     }
 
-    this.waveSystem = new WaveSystem(config.mission.waves, config.mode === 'survival');
+    this.waveSystem = new WaveSystem(this.mission.waves, config.mode === 'survival');
     this.gameSpeed = config.initialGameSpeed ?? config.profile.settings.defaultGameSpeed ?? 1;
 
     const initialPrompts = AdaptiveLearningEngine.generateExerciseBatch(
@@ -359,6 +426,29 @@ export class GameSessionEngine {
     };
   }
 
+  public getCumulativeBaseDamage(): number {
+    return this.cumulativeBaseDamage;
+  }
+
+  public getUsedTowerTypes(): TowerType[] {
+    return Array.from(this.usedTowerTypes);
+  }
+
+  public canBuildTowerType(type: TowerType): boolean {
+    if (this.challengeConfig) {
+      if (!this.challengeConfig.allowedTowers.includes(type)) return false;
+      const maxTypes = this.challengeConfig.completionCriteria.maxTowerTypes;
+      if (maxTypes !== null && !this.usedTowerTypes.has(type) && this.usedTowerTypes.size >= maxTypes) {
+        return false;
+      }
+      return true;
+    }
+    if (this.mode === 'campaign' && !this.profile.unlockedTowers.includes(type)) {
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Builds a tower on `padIndex` if unoccupied and affordable.
    */
@@ -368,7 +458,7 @@ export class GameSessionEngine {
     if (!pad) return null;
     if (this.towers.some((t) => t.padIndex === padIndex)) return null;
 
-    if (this.mode === 'campaign' && !this.profile.unlockedTowers.includes(type)) {
+    if (!this.canBuildTowerType(type)) {
       return null;
     }
 
@@ -378,6 +468,7 @@ export class GameSessionEngine {
     this.typingEngine.markIdleBreak();
     const tower = TowerSystem.createTower(type, pad, `${this.towers.length + 1}`);
     this.towers.push(tower);
+    this.usedTowerTypes.add(type);
     this.recalculateReactorBonuses();
     this.selectedPadIndex = padIndex;
     this.selectedTowerId = tower.id;
@@ -388,7 +479,11 @@ export class GameSessionEngine {
     if (this.sessionOver) return false;
     const tower = this.towers.find((t) => t.id === towerId);
     if (!tower) return false;
-    const maxTier = this.mode === 'sandbox' ? 3 : this.profile.unlockedUpgradeTiers;
+    const maxTier = this.challengeConfig
+      ? this.challengeConfig.maxUpgradeTier
+      : this.mode === 'sandbox'
+      ? 3
+      : this.profile.unlockedUpgradeTiers;
     const ok = TowerSystem.upgradeTower(tower, branch, this.economy, maxTier);
     if (ok) {
       this.typingEngine.markIdleBreak();
@@ -421,12 +516,40 @@ export class GameSessionEngine {
   }
 
   private recalculateReactorBonuses(): void {
-    let bonusMaxEnergy = 0;
+    let bonusMaxEnergy = this.hero?.id === 'engineer' ? 15 : 0;
     for (const tower of this.towers) {
       const stats = TowerSystem.computeBaseAndUpgradeStats(tower);
       bonusMaxEnergy += stats.maxEnergyBonus;
     }
     this.economy.setBonusMaxEnergy(bonusMaxEnergy);
+  }
+
+  public getHero(): ActiveHero | null {
+    return this.hero;
+  }
+
+  public canTriggerHeroAbility(slotIndex: 0 | 1): boolean {
+    if (!this.hero || this.sessionOver || this.isPaused) return false;
+    return HeroSystem.canTriggerHeroAbility(this.hero, slotIndex, this.enemies, this.economy);
+  }
+
+  public triggerHeroAbility(slotIndex: 0 | 1): boolean {
+    if (!this.hero || this.sessionOver || this.isPaused) return false;
+    const result = HeroSystem.triggerHeroAbility(
+      this.hero,
+      slotIndex,
+      this.enemies,
+      this.economy,
+      (healAmt) => {
+        this.lives = Math.min(this.maxLives, this.lives + healAmt);
+      }
+    );
+    if (!result.triggered) return false;
+    this.projectiles.push(...result.projectiles);
+    this.floatingTexts.push(...result.floatingTexts);
+    this.renderEffects.spawnShockwave(this.hero.x, this.hero.y, 160, '#38bdf8', 0.45, 3);
+    this.renderEffects.triggerShake(4, 0.22);
+    return true;
   }
 
   public getReactorPassiveStats(): {
@@ -541,11 +664,12 @@ export class GameSessionEngine {
    */
   public handleKeyInput(key: string, now: number = Date.now(), isRepeat: boolean = false): KeystrokeResult {
     const { keystrokeEnergyMultiplier } = this.getReactorPassiveStats();
+    const heroBonus = this.hero?.id === 'engineer' ? 0.12 : 0;
     const result = this.typingEngine.processKeyInput(
       key,
       this.profile.characterMastery,
       this.profile.bigramMastery,
-      keystrokeEnergyMultiplier,
+      keystrokeEnergyMultiplier + heroBonus,
       now,
       isRepeat
     );
@@ -553,6 +677,12 @@ export class GameSessionEngine {
     if (!result.ignored && result.isCorrect) {
       this.economy.addEnergy(result.energyGenerated);
       this.score += Math.round(10 * (1 + result.combo * 0.05));
+
+      const targetTower = this.towers[this.typingEngine.getTotalCorrect() % Math.max(1, this.towers.length)];
+      const endWp = this.map.waypoints[this.map.waypoints.length - 1] ?? { x: 860, y: 200 };
+      const orbToX = targetTower ? targetTower.x : endWp.x - 32;
+      const orbToY = targetTower ? targetTower.y : endWp.y;
+      this.renderEffects.spawnEnergyOrb(465, 395, orbToX, orbToY, result.sequenceCompleted ? '#facc15' : '#38bdf8');
 
       if (result.sequenceCompleted) {
         const effects = CombatSystem.triggerSequenceCompletionEffects(this.towers, this.enemies);
@@ -660,6 +790,7 @@ export class GameSessionEngine {
       }
       if (step.reachedBase) {
         this.lives = Math.max(0, this.lives - enemy.baseDamage);
+        this.cumulativeBaseDamage += enemy.baseDamage;
         this.floatingTexts.push({
           id: `base_hit_${Date.now()}_${Math.random()}`,
           x: enemy.x - 20,
@@ -675,6 +806,7 @@ export class GameSessionEngine {
     }
 
     this.enemies = [...remainingAfterMove, ...newlySpawnedMinions];
+    EnemySystem.applySupportAuras(this.enemies, dtSec);
 
     if (this.lives <= 0) {
       this.sessionOver = true;
@@ -683,16 +815,31 @@ export class GameSessionEngine {
       return { shotsFiredByType: {}, waveCompleted: false, goldChanged: this.economy.getGold() !== prevGold };
     }
 
-    // 3. Towers attack
+    // In No-Leak challenge, fail immediately if cumulative base damage exceeds maxLeaksAllowed
+    if (this.challengeConfig && this.cumulativeBaseDamage > this.challengeConfig.completionCriteria.maxLeaksAllowed) {
+      this.sessionOver = true;
+      this.victory = false;
+      this.inFollowUpPractice = false;
+      return { shotsFiredByType: {}, waveCompleted: false, goldChanged: this.economy.getGold() !== prevGold };
+    }
+
+    // 3. Towers & Hero attack
     const combatEvents = CombatSystem.updateTowers(
       dtSec,
       this.towers,
       this.enemies,
       this.economy,
-      this.typingEngine.getCombo()
+      this.typingEngine.getCombo(),
+      { hero: this.hero, techModifiers: this.techModifiers }
     );
     this.projectiles.push(...combatEvents.projectilesCreated);
     this.floatingTexts.push(...combatEvents.floatingTextsCreated);
+
+    if (this.hero) {
+      const heroEvents = HeroSystem.updateHero(this.hero, dtSec, this.enemies, this.economy);
+      this.projectiles.push(...heroEvents.projectilesCreated);
+      this.floatingTexts.push(...heroEvents.floatingTextsCreated);
+    }
 
     // 4. Resolve enemy deaths & splitter fragments
     const resolved = CombatSystem.resolveDefeatedEnemies(this.enemies, this.path, this.economy);
@@ -700,6 +847,13 @@ export class GameSessionEngine {
     if (resolved.defeatedEnemies.length > 0) {
       this.enemiesDefeatedCount += resolved.defeatedEnemies.length;
       this.score += resolved.defeatedEnemies.length * 25 + resolved.bossesDefeated * 500;
+      for (const dead of resolved.defeatedEnemies) {
+        this.renderEffects.spawnBurst(dead.x, dead.y, dead.color, dead.isBoss ? 28 : 8, 'spark', dead.isBoss ? 140 : 85);
+        if (dead.isBoss) {
+          this.renderEffects.spawnShockwave(dead.x, dead.y, 120, '#f43f5e', 0.55, 4);
+          this.renderEffects.triggerShake(7, 0.35);
+        }
+      }
       for (const dead of resolved.defeatedEnemies.slice(0, 3)) {
         this.floatingTexts.push({
           id: `gold_${dead.id}`,
@@ -719,6 +873,9 @@ export class GameSessionEngine {
       waveCompleted = true;
       this.economy.addGold(waveTick.completedWaveDef.bonusGold + goldPerWave);
       this.score += 150;
+      if (this.hero) {
+        HeroSystem.addHeroXp(this.hero, 45, this.techModifiers.heroXpMultiplier);
+      }
 
       if (!this.waveSystem.hasMoreWaves() && this.enemies.length === 0) {
         this.allWavesCleared = true;
@@ -744,6 +901,8 @@ export class GameSessionEngine {
       .map((f) => ({ ...f, y: f.y - 18 * rawDtSec, life: f.life - rawDtSec }))
       .filter((f) => f.life > 0);
 
+    this.renderEffects.update(rawDtSec);
+
     return {
       shotsFiredByType: combatEvents.shotsFiredByType,
       waveCompleted,
@@ -752,6 +911,7 @@ export class GameSessionEngine {
   }
 
   public getRequiredCharsForVictory(): number {
+    if (this.challengeConfig) return this.challengeConfig.completionCriteria.minTypedChars;
     if (this.mode !== 'campaign') return 0;
     return this.profile.settings.difficulty === 'relaxed'
       ? Math.floor(this.mission.requiredTypedChars * 0.7)
@@ -761,6 +921,37 @@ export class GameSessionEngine {
   private checkVictoryOrFollowUpCondition(): void {
     if (this.sessionOver || this.mode === 'survival' || this.mode === 'sandbox') return;
     if (!this.allWavesCleared || this.lives <= 0) return;
+
+    if (this.mode === 'challenge' && this.challengeConfig) {
+      const evalRes = ChallengeEngine.evaluateChallengeCompletion(this.challengeConfig, {
+        remainingLives: this.lives,
+        cumulativeBaseDamage: this.cumulativeBaseDamage,
+        correctChars: this.typingEngine.getTotalCorrect(),
+        accuracy: this.typingEngine.getAccuracy(),
+        usedTowerTypes: this.getUsedTowerTypes(),
+      });
+      if (evalRes.passed) {
+        this.inFollowUpPractice = false;
+        this.sessionOver = true;
+        this.victory = true;
+        return;
+      }
+      // If waves cleared & only chars/accuracy remain, allow follow-up practice or fail if accuracy/leaks failed
+      if (this.cumulativeBaseDamage > this.challengeConfig.completionCriteria.maxLeaksAllowed) {
+        this.sessionOver = true;
+        this.victory = false;
+        return;
+      }
+      if (!this.inFollowUpPractice && this.typingEngine.getTotalCorrect() < this.challengeConfig.completionCriteria.minTypedChars) {
+        this.inFollowUpPractice = true;
+        return;
+      }
+      if (this.typingEngine.getTotalCorrect() >= this.challengeConfig.completionCriteria.minTypedChars) {
+        this.sessionOver = true;
+        this.victory = false;
+      }
+      return;
+    }
 
     const edu = ProgressionEngine.checkEducationalCompletion(
       this.mission,

@@ -1,16 +1,19 @@
 import { ACHIEVEMENTS_DATA, COSMETICS_DATA } from '../data/achievementsData';
 import { MISSIONS_DATA } from '../data/curriculumData';
 import { TOWER_ORDER } from '../data/towersData';
+import { TECH_TREE_DATA } from '../systems/ChallengeEngine';
 import { MasteryEngine } from '../systems/MasteryEngine';
 import { StatisticsEngine } from '../systems/StatisticsEngine';
 import {
   AppSettings,
   BigramStats,
+  ChallengeCompletionRecord,
   CharacterStats,
   DailyPracticeAggregate,
   DifficultyLevel,
   DifficultyMissionRecord,
   GameMode,
+  HeroId,
   Language,
   MasteryStatus,
   MissionProgressRecord,
@@ -22,14 +25,16 @@ import {
 } from '../types';
 
 export const STORAGE_KEY = 'keyfort_td_save_data';
-export const CURRENT_SAVE_VERSION = 3;
+export const CURRENT_SAVE_VERSION = 4;
 
 const VALID_TOWERS = new Set<TowerType>(TOWER_ORDER);
+const VALID_HEROES = new Set<HeroId>(['guardian', 'engineer', 'ranger', 'arcanist']);
+const VALID_TECHS = new Set<string>(TECH_TREE_DATA.map((t) => t.id));
 const VALID_ACHIEVEMENTS = new Set<string>(ACHIEVEMENTS_DATA.map((a) => a.id));
 const VALID_COSMETICS = new Set<string>(COSMETICS_DATA.map((c) => c.id));
 const VALID_MISSIONS = new Set<string>(MISSIONS_DATA.map((m) => m.id));
 const VALID_MASTERY_STATUS = new Set<MasteryStatus>(['locked', 'learning', 'practicing', 'mastered']);
-const VALID_GAME_MODES = new Set<GameMode>(['campaign', 'survival', 'sandbox']);
+const VALID_GAME_MODES = new Set<GameMode>(['campaign', 'survival', 'sandbox', 'training', 'assessment', 'challenge']);
 const VALID_SESSION_STATUS = new Set<SessionCompletionStatus>([
   'completed',
   'victory',
@@ -600,7 +605,7 @@ export class PersistenceService {
 
         const charsTyped = Math.floor(clampFinite(entry.charsTyped, 0, 100000, 0));
         const durationSec = Math.round(clampFinite(entry.durationSec, 0, 86400, 0));
-        const qualifyingWpm = entry.unrestrictedResources === true || mode === 'sandbox'
+        const qualifyingWpm = entry.unrestrictedResources === true || mode === 'sandbox' || mode === 'training' || mode === 'assessment' || entry.qualifyingWpm === null
           ? null
           : StatisticsEngine.computeQualifyingWpm(charsTyped, durationSec);
 
@@ -671,6 +676,137 @@ export class PersistenceService {
         ? Math.floor(clampFinite(raw.bestQualifyingWpm, 0, 400, 0))
         : null;
 
+    const unlockedHeroes: HeroId[] = Array.isArray(raw.unlockedHeroes)
+      ? raw.unlockedHeroes.filter((h): h is HeroId => typeof h === 'string' && VALID_HEROES.has(h as HeroId))
+      : [];
+
+    // Backfill V2 heroes & towers for existing migrated profiles based on completed campaign milestones
+    let maxCompletedGlobalIndex = 0;
+    for (const [mId, rec] of Object.entries(completedMissions)) {
+      if (rec.completed) {
+        const mDef = MISSIONS_DATA.find((m) => m.id === mId);
+        if (mDef && mDef.globalIndex > maxCompletedGlobalIndex) {
+          maxCompletedGlobalIndex = mDef.globalIndex;
+        }
+      }
+    }
+    if (maxCompletedGlobalIndex >= 3 && !unlockedHeroes.includes('guardian')) unlockedHeroes.push('guardian');
+    if (maxCompletedGlobalIndex >= 6) {
+      if (!unlockedHeroes.includes('engineer')) unlockedHeroes.push('engineer');
+      if (!unlockedTowers.includes('flame')) unlockedTowers.push('flame');
+    }
+    if (maxCompletedGlobalIndex >= 12) {
+      if (!unlockedHeroes.includes('ranger')) unlockedHeroes.push('ranger');
+      if (!unlockedTowers.includes('drone')) unlockedTowers.push('drone');
+    }
+    if (maxCompletedGlobalIndex >= 18) {
+      if (!unlockedHeroes.includes('arcanist')) unlockedHeroes.push('arcanist');
+      if (!unlockedTowers.includes('command')) unlockedTowers.push('command');
+    }
+    if (maxCompletedGlobalIndex >= 24 && !unlockedTowers.includes('laser')) {
+      unlockedTowers.push('laser');
+    }
+
+    const explicitNoHero = Boolean(raw.explicitNoHero);
+    const selectedHeroId: HeroId | null =
+      typeof raw.selectedHeroId === 'string' && unlockedHeroes.includes(raw.selectedHeroId as HeroId)
+        ? (raw.selectedHeroId as HeroId)
+        : !explicitNoHero && raw.selectedHeroId === undefined && unlockedHeroes.length > 0
+        ? unlockedHeroes[0]
+        : null;
+
+    const heroXp: Partial<Record<HeroId, number>> = {};
+    if (isPlainObject(raw.heroXp)) {
+      for (const h of VALID_HEROES) {
+        if (isFiniteNumber(raw.heroXp[h])) {
+          heroXp[h] = Math.floor(clampFinite(raw.heroXp[h], 0, 1000000, 0));
+        }
+      }
+    }
+
+    const techPoints = Math.floor(clampFinite(raw.techPoints, 0, 500, 0));
+    const unlockedTechs: string[] = Array.isArray(raw.unlockedTechs)
+      ? Array.from(
+          new Set(
+            raw.unlockedTechs.filter(
+              (t): t is string => typeof t === 'string' && VALID_TECHS.has(t)
+            )
+          )
+        )
+      : [];
+    const completedChallenges: NonNullable<PlayerProfile['completedChallenges']> = {};
+    if (isPlainObject(raw.completedChallenges)) {
+      for (const [cId, cVal] of Object.entries(raw.completedChallenges)) {
+        if (!RESERVED_OBJECT_KEYS.has(cId) && isPlainObject(cVal)) {
+          completedChallenges[cId] = {
+            score: Math.floor(clampFinite(cVal.score, 0, 10000000, 0)),
+            accuracy: clampFinite(cVal.accuracy, 0, 1, 0),
+            timestamp: Math.floor(clampFinite(cVal.timestamp, 0, Number.MAX_SAFE_INTEGER, Date.now())),
+            rulesetVersion: isFiniteNumber(cVal.rulesetVersion) ? Math.floor(cVal.rulesetVersion) : 1,
+            difficulty: VALID_DIFFICULTY.has(cVal.difficulty as DifficultyLevel)
+              ? (cVal.difficulty as DifficultyLevel)
+              : 'standard',
+            wpm: isFiniteNumber(cVal.wpm) ? Math.floor(clampFinite(cVal.wpm, 0, 350, 0)) : 0,
+            baseDamage: isFiniteNumber(cVal.baseDamage) ? Math.floor(clampFinite(cVal.baseDamage, 0, 1000, 0)) : 0,
+            wavesCompleted: isFiniteNumber(cVal.wavesCompleted) ? Math.floor(clampFinite(cVal.wavesCompleted, 0, 1000, 0)) : 0,
+            towerTypesUsed: Array.isArray(cVal.towerTypesUsed)
+              ? cVal.towerTypesUsed.filter((t): t is TowerType => typeof t === 'string' && VALID_TOWERS.has(t as TowerType))
+              : [],
+          };
+        }
+      }
+    }
+    const challengeHistory: ChallengeCompletionRecord[] = [];
+    if (Array.isArray(raw.challengeHistory)) {
+      for (const chRec of raw.challengeHistory.slice(0, 60)) {
+        if (isPlainObject(chRec) && typeof chRec.challengeId === 'string') {
+          challengeHistory.push({
+            challengeId: chRec.challengeId.slice(0, 80),
+            rulesetVersion: isFiniteNumber(chRec.rulesetVersion) ? Math.floor(chRec.rulesetVersion) : 1,
+            profileId: safeId,
+            timestamp: Math.floor(clampFinite(chRec.timestamp, 0, Number.MAX_SAFE_INTEGER, Date.now())),
+            difficulty: VALID_DIFFICULTY.has(chRec.difficulty as DifficultyLevel)
+              ? (chRec.difficulty as DifficultyLevel)
+              : 'standard',
+            score: Math.floor(clampFinite(chRec.score, 0, 10000000, 0)),
+            accuracy: clampFinite(chRec.accuracy, 0, 1, 0),
+            correctChars: Math.floor(clampFinite(chRec.correctChars, 0, 1000000, 0)),
+            errors: Math.floor(clampFinite(chRec.errors, 0, 1000000, 0)),
+            durationSec: Math.floor(clampFinite(chRec.durationSec, 0, 86400, 0)),
+            wpm: Math.floor(clampFinite(chRec.wpm, 0, 350, 0)),
+            baseDamage: Math.floor(clampFinite(chRec.baseDamage, 0, 1000, 0)),
+            wavesCompleted: Math.floor(clampFinite(chRec.wavesCompleted, 0, 1000, 0)),
+            towerTypesUsed: Array.isArray(chRec.towerTypesUsed)
+              ? chRec.towerTypesUsed.filter((t): t is TowerType => typeof t === 'string' && VALID_TOWERS.has(t as TowerType))
+              : [],
+            heroId:
+              typeof chRec.heroId === 'string' && VALID_HEROES.has(chRec.heroId as HeroId)
+                ? (chRec.heroId as HeroId)
+                : null,
+            status: chRec.status === 'completed' ? 'completed' : 'failed',
+          });
+        }
+      }
+    }
+    const standardizedTestRecords: NonNullable<PlayerProfile['standardizedTestRecords']> = [];
+    if (Array.isArray(raw.standardizedTestRecords)) {
+      for (const rec of raw.standardizedTestRecords.slice(0, 30)) {
+        if (isPlainObject(rec)) {
+          const dur = rec.durationSec === 30 || rec.durationSec === 60 || rec.durationSec === 120 ? rec.durationSec : 0;
+          standardizedTestRecords.push({
+            rulesVersion: rec.rulesVersion === 1 ? 1 : undefined,
+            durationSec: dur,
+            pool: rec.pool === 'full' ? 'full' : 'beginner',
+            language: rec.language === 'en' ? 'en' : 'pl',
+            wpm: Math.floor(clampFinite(rec.wpm, 0, 350, 0)),
+            accuracy: clampFinite(rec.accuracy, 0, 1, 0),
+            consistency: Math.floor(clampFinite(rec.consistency, 0, 100, 0)),
+            timestamp: Math.floor(clampFinite(rec.timestamp, 0, Number.MAX_SAFE_INTEGER, Date.now())),
+          });
+        }
+      }
+    }
+
     return {
       ...def,
       createdAt: Math.floor(clampFinite(raw.createdAt, 0, Number.MAX_SAFE_INTEGER, def.createdAt)),
@@ -696,6 +832,20 @@ export class PersistenceService {
       sessionHistory,
       dailyStats,
       settings,
+      selectedHeroId,
+      explicitNoHero,
+      unlockedHeroes,
+      heroXp,
+      techPoints,
+      unlockedTechs,
+      completedChallenges,
+      challengeHistory,
+      standardizedTestRecords,
+      skillAssessmentDone: Boolean(raw.skillAssessmentDone),
+      skillLevelChoice:
+        raw.skillLevelChoice === 'intermediate' || raw.skillLevelChoice === 'advanced'
+          ? raw.skillLevelChoice
+          : 'beginner',
     };
   }
 

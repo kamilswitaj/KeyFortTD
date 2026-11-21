@@ -87,8 +87,71 @@ export class CampaignMapView {
       })
       .join('');
 
+    const worldMapNodesSvg = WORLDS_DATA.map((w, idx) => {
+      const mList = getMissionsByWorld(w.id);
+      const done = mList.filter((m) => profile.completedMissions[m.id]?.completed).length;
+      const isSelected = w.id === currentWorld.id;
+      const cx = 65 + idx * 124;
+      const cy = idx % 2 === 0 ? 44 : 74;
+      const nextCx = idx < 7 ? 65 + (idx + 1) * 124 : cx;
+      const nextCy = (idx + 1) % 2 === 0 ? 44 : 74;
+      return `
+        ${
+          idx < 7
+            ? `<line x1="${cx}" y1="${cy}" x2="${nextCx}" y2="${nextCy}" stroke="${done === 6 ? '#22c55e' : 'rgba(148,163,184,0.35)'}" stroke-width="3" stroke-dasharray="${done === 6 ? 'none' : '5 5'}" />`
+            : ''
+        }
+        <g style="cursor:pointer;" data-world-id="${w.id}" data-testid="world-map-node-${w.id}">
+          <circle cx="${cx}" cy="${cy}" r="${isSelected ? 21 : 16}" fill="${isSelected ? '#0f172a' : '#1e293b'}" stroke="${w.primaryColor}" stroke-width="${isSelected ? 3.5 : 2}" />
+          <text x="${cx}" y="${cy + 4}" fill="#f8fafc" font-size="12" font-weight="800" text-anchor="middle">${w.id}</text>
+          <text x="${cx}" y="${cy + 30}" fill="${isSelected ? '#38bdf8' : '#cbd5e1'}" font-size="8.8" font-weight="700" text-anchor="middle">${escapeHtml(i18n.pick(w.namePl, w.nameEn))}</text>
+          <text x="${cx}" y="${cy + 41}" fill="#94a3b8" font-size="8" text-anchor="middle">${done}/6 ★</text>
+        </g>
+      `;
+    }).join('');
+
+    const WORLD_STORY: Record<number, { pl: string; en: string }> = {
+      1: {
+        pl: 'Skażone portale otworzyły się w Zielonej Dolinie. Odtwórz rytm rzędu bazowego (F/J) i zasil pierwsze wieże.',
+        en: 'Corrupted portals opened in Green Valley. Restore the home-row rhythm (F/J) to power the first bastions.',
+      },
+      2: {
+        pl: 'Cienie Mrocznego Lasu tłumią sygnały. Opanuj górny rząd klawiszy i odblokuj Mroźne oraz Płomienne wieże.',
+        en: 'Dark Forest shadows jam our signals. Master the top row and unlock Frost & Flame towers.',
+      },
+      3: {
+        pl: 'Przełęcz Górska wymaga koordynacji obu dłoni. Hangar Dronów i Wieża Tesli powstrzymają szybkie oddziały.',
+        en: 'Mountain Pass demands two-hand coordination. Drone Hangars and Tesla Coils counter swift raiders.',
+      },
+      4: {
+        pl: 'Na Pustynnej Placówce wrogowie używają tarcz i wsparcia. Dowodzenie i polskie znaki wzmocnią obronę.',
+        en: 'Desert Outpost foes deploy shields and medics. Command Towers and diacritics sharpen your defense.',
+      },
+      5: {
+        pl: 'Lodowe Wyspy strzegą starożytnych kryształów energii. Skupiona Wieża Laserowa przebije najgrubszy pancerz.',
+        en: 'Frozen Islands guard crystal conduits. The Laser Tower pierces the heaviest armor.',
+      },
+      6: {
+        pl: 'W Starożytnych Ruinach budzą się Widma. Użyj Shift i pełnych słów, by rozświetlić pole bitwy.',
+        en: 'Ghosts awaken inside Ancient Ruins. Use Shift and full words to illuminate the battlefield.',
+      },
+      7: {
+        pl: 'Przemysłowe Miasto zalewają zmechanizowane fale. Cyfry i interpunkcja zasilą pełną sieć obronną.',
+        en: 'Mechanized waves surge through Industrial City. Numbers and punctuation power the full grid.',
+      },
+      8: {
+        pl: 'Finałowa Twierdza KeyFort — połącz strategię wież, bohatera i mistrzostwo klawiatury przeciw Imperatorowi Omega!',
+        en: 'Final Fortress — unite tower synergies, your Hero, and keyboard mastery against Emperor Omega!',
+      },
+    };
+
     return `
       <section data-testid="campaign-map-screen">
+        <div class="sidebar-panel" style="padding:0.5rem 0.75rem; margin-bottom:0.65rem; background:linear-gradient(180deg, rgba(15,23,42,0.95), rgba(7,11,20,0.95));" data-testid="interactive-world-map">
+          <svg viewBox="0 0 1000 118" style="width:100%; height:auto; display:block;" aria-label="${escapeHtml(i18n.pick('Mapa Światów KeyFort', 'KeyFort World Map'))}">
+            ${worldMapNodesSvg}
+          </svg>
+        </div>
         <div class="worlds-tabs">${worldTabsHtml}</div>
         <div class="world-header-banner" style="border-left: 5px solid ${currentWorld.primaryColor}; padding:0.75rem 1.15rem; margin-bottom:0.75rem;">
           <div>
@@ -98,11 +161,11 @@ export class CampaignMapView {
                 🎯 ${escapeHtml(i18n.pick(currentWorld.focusPl, currentWorld.focusEn))}
               </span>
             </div>
-            <p style="color:#94a3b8; font-size:0.81rem; margin-top:0.2rem; max-width:860px;">
-              ${escapeHtml(i18n.pick(currentWorld.descriptionPl, currentWorld.descriptionEn))}
+            <p style="color:#cbd5e1; font-size:0.81rem; margin-top:0.2rem; max-width:860px;">
+              📜 ${escapeHtml(i18n.pick(WORLD_STORY[currentWorld.id]?.pl ?? currentWorld.descriptionPl, WORLD_STORY[currentWorld.id]?.en ?? currentWorld.descriptionEn))}
             </p>
           </div>
-          <div style="text-align:right; font-size:0.82rem;">
+          <div style="text-align:right; font-size:0.82rem; flex-shrink:0;">
             <div>👑 Boss: <strong style="color:#fda4af;">${escapeHtml(i18n.pick(currentWorld.bossNamePl, currentWorld.bossNameEn))}</strong></div>
             ${
               currentWorld.unlockedTower

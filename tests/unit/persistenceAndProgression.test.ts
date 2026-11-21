@@ -52,7 +52,7 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     };
 
     const migrated = PersistenceService.migrateAndValidateSaveData(legacyV0);
-    expect(migrated.version).toBe(3);
+    expect(migrated.version).toBe(4);
     const active = migrated.profiles[migrated.activeProfileId];
     expect(active.name).toBe('Kamil_Legacy');
     expect(active.level).toBe(4);
@@ -131,7 +131,7 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     };
 
     const migrated = PersistenceService.migrateAndValidateSaveData(v2Save);
-    expect(migrated.version).toBe(3);
+    expect(migrated.version).toBe(4);
     const prof = migrated.profiles.profile_default;
     expect(prof.level).toBe(5);
     expect(prof.completedMissions.w1_m1.completed).toBe(true);

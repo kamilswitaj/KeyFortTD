@@ -297,10 +297,41 @@ export class ProgressionEngine {
       }
     }
 
-    // Unlock reactor in World 2 alongside Frost
-    if (highestWorld >= 2 && !profile.unlockedTowers.includes('reactor')) {
-      profile.unlockedTowers.push('reactor');
-      newlyUnlockedTowers.push('reactor');
+    // Unlock optional V2.0 towers progressively alongside World unlocks
+    const extraTowerUnlocks: Array<{ world: number; type: TowerType }> = [
+      { world: 2, type: 'reactor' },
+      { world: 2, type: 'flame' },
+      { world: 3, type: 'drone' },
+      { world: 4, type: 'command' },
+      { world: 5, type: 'laser' },
+    ];
+    for (const item of extraTowerUnlocks) {
+      if (highestWorld >= item.world && !profile.unlockedTowers.includes(item.type)) {
+        profile.unlockedTowers.push(item.type);
+        newlyUnlockedTowers.push(item.type);
+      }
+    }
+
+    // Unlock heroes progressively after initial onboarding lessons (Mission 1.3+)
+    if (!profile.unlockedHeroes) profile.unlockedHeroes = [];
+    const heroChecks: Array<{ cond: boolean; hero: 'guardian' | 'engineer' | 'ranger' | 'arcanist' }> = [
+      { cond: mission.globalIndex >= 3, hero: 'guardian' },
+      { cond: highestWorld >= 2, hero: 'engineer' },
+      { cond: highestWorld >= 3, hero: 'ranger' },
+      { cond: highestWorld >= 4, hero: 'arcanist' },
+    ];
+    for (const hc of heroChecks) {
+      if (hc.cond && !profile.unlockedHeroes.includes(hc.hero)) {
+        profile.unlockedHeroes.push(hc.hero);
+        if (!profile.selectedHeroId && !profile.explicitNoHero) {
+          profile.selectedHeroId = hc.hero;
+        }
+      }
+    }
+
+    // Award 1 Tech Point on first completion of a Boss mission
+    if (mission.isBossMission && !prevRecord?.completed) {
+      profile.techPoints = (profile.techPoints ?? 0) + 1;
     }
 
     if (highestWorld >= 2 && profile.unlockedUpgradeTiers < 2) {
