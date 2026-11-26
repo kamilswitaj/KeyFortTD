@@ -11,6 +11,8 @@ import {
 
 export const CHALLENGE_RULESET_VERSION = 1;
 export const MAX_CHALLENGE_BEST_RECORDS = 240;
+export const MAX_COMPLETED_CHALLENGES = 240;
+export const MAX_AWARDED_CHALLENGE_IDS = 400;
 
 export type ChallengeTier = 'home_anchors' | 'beginner' | 'intermediate' | 'full';
 export type ChallengeKind = 'no_leak' | 'precision' | 'limited_gold' | 'two_towers' | 'boss_rush';
@@ -445,6 +447,64 @@ export class ChallengeEngine {
     return Object.fromEntries(entries.slice(0, maxEntries));
   }
 
+  public static pruneCompletedChallenges(
+    completed: NonNullable<PlayerProfile['completedChallenges']>,
+    maxEntries: number = MAX_COMPLETED_CHALLENGES
+  ): NonNullable<PlayerProfile['completedChallenges']> {
+    const entries = Object.entries(completed);
+    if (entries.length <= maxEntries) return completed;
+    entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
+    return Object.fromEntries(entries.slice(0, maxEntries));
+  }
+
+  public static extractDailyDateFromChallengeId(challengeId: string): string | null {
+    const match = /^daily_(\d{4}-\d{2}-\d{2})_/.exec(challengeId);
+    return match ? match[1] : null;
+  }
+
+  public static pruneAwardedChallengeIds(
+    ids: string[],
+    existingCutoffDate?: string,
+    maxEntries: number = MAX_AWARDED_CHALLENGE_IDS
+  ): { ids: string[]; cutoffDate?: string } {
+    const unique: string[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (typeof id === 'string' && id && !seen.has(id)) {
+        seen.add(id);
+        unique.push(id);
+      }
+    }
+    let cutoffDate =
+      existingCutoffDate && /^\d{4}-\d{2}-\d{2}$/.test(existingCutoffDate)
+        ? existingCutoffDate
+        : undefined;
+    if (unique.length <= maxEntries) {
+      return { ids: unique, cutoffDate };
+    }
+    const overflowCount = unique.length - maxEntries;
+    const evicted = unique.slice(0, overflowCount);
+    for (const id of evicted) {
+      const d = ChallengeEngine.extractDailyDateFromChallengeId(id);
+      if (d && (!cutoffDate || d > cutoffDate)) {
+        cutoffDate = d;
+      }
+    }
+    return {
+      ids: unique.slice(overflowCount),
+      cutoffDate,
+    };
+  }
+
+  public static hasAwardedChallengeReward(profile: PlayerProfile, challengeId: string): boolean {
+    if (profile.awardedChallengeIds?.includes(challengeId)) return true;
+    const dateKey = ChallengeEngine.extractDailyDateFromChallengeId(challengeId);
+    if (dateKey && profile.awardedChallengeCutoffDate && dateKey <= profile.awardedChallengeCutoffDate) {
+      return true;
+    }
+    return false;
+  }
+
   public static recordChallengeCompletion(
     profile: PlayerProfile,
     config: ChallengeSessionConfig,
@@ -466,8 +526,16 @@ export class ChallengeEngine {
 
     const prev = profile.completedChallenges[config.challengeId];
     let awardedTechPoints = 0;
-    if (!profile.awardedChallengeIds.includes(config.challengeId)) {
+    if (!ChallengeEngine.hasAwardedChallengeReward(profile, config.challengeId)) {
       profile.awardedChallengeIds.push(config.challengeId);
+      const prunedAwards = ChallengeEngine.pruneAwardedChallengeIds(
+        profile.awardedChallengeIds,
+        profile.awardedChallengeCutoffDate
+      );
+      profile.awardedChallengeIds = prunedAwards.ids;
+      if (prunedAwards.cutoffDate) {
+        profile.awardedChallengeCutoffDate = prunedAwards.cutoffDate;
+      }
       awardedTechPoints = config.techPointReward;
       profile.techPoints = (profile.techPoints ?? 0) + awardedTechPoints;
     }
@@ -511,6 +579,7 @@ export class ChallengeEngine {
         wavesCompleted: record.wavesCompleted,
         towerTypesUsed: [...record.towerTypesUsed],
       };
+      profile.completedChallenges = ChallengeEngine.pruneCompletedChallenges(profile.completedChallenges);
     }
 
     return { awardedTechPoints };

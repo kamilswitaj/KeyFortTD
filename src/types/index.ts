@@ -650,6 +650,7 @@ export interface PlayerProfile {
   >;
   challengeBestByKey?: Record<string, ChallengeBestRecord>;
   awardedChallengeIds?: string[];
+  awardedChallengeCutoffDate?: string;
   challengeHistory?: ChallengeCompletionRecord[];
   standardizedTestRecords?: Array<{
     rulesVersion?: number;

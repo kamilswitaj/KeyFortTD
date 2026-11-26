@@ -1,7 +1,13 @@
 import { ACHIEVEMENTS_DATA, COSMETICS_DATA } from '../data/achievementsData';
 import { MISSIONS_DATA } from '../data/curriculumData';
 import { TOWER_ORDER } from '../data/towersData';
-import { ChallengeEngine, MAX_CHALLENGE_BEST_RECORDS, TECH_TREE_DATA } from '../systems/ChallengeEngine';
+import {
+  ChallengeEngine,
+  MAX_AWARDED_CHALLENGE_IDS,
+  MAX_CHALLENGE_BEST_RECORDS,
+  MAX_COMPLETED_CHALLENGES,
+  TECH_TREE_DATA,
+} from '../systems/ChallengeEngine';
 import { MasteryEngine } from '../systems/MasteryEngine';
 import { StatisticsEngine } from '../systems/StatisticsEngine';
 import { STANDARDIZED_RULES_VERSION } from '../systems/TrainingAcademyEngine';
@@ -736,7 +742,7 @@ export class PersistenceService {
           )
         )
       : [];
-    const completedChallenges: NonNullable<PlayerProfile['completedChallenges']> = {};
+    let completedChallenges: NonNullable<PlayerProfile['completedChallenges']> = {};
     if (isPlainObject(raw.completedChallenges)) {
       for (const [cId, cVal] of Object.entries(raw.completedChallenges)) {
         if (!RESERVED_OBJECT_KEYS.has(cId) && isPlainObject(cVal)) {
@@ -758,6 +764,7 @@ export class PersistenceService {
         }
       }
     }
+    completedChallenges = ChallengeEngine.pruneCompletedChallenges(completedChallenges, MAX_COMPLETED_CHALLENGES);
     const challengeHistory: ChallengeCompletionRecord[] = [];
     if (Array.isArray(raw.challengeHistory)) {
       for (const chRec of raw.challengeHistory.slice(0, 60)) {
@@ -864,19 +871,37 @@ export class PersistenceService {
     }
     challengeBestByKey = ChallengeEngine.pruneChallengeBestByKey(challengeBestByKey, MAX_CHALLENGE_BEST_RECORDS);
 
-    const awardedSet = new Set<string>(Object.keys(completedChallenges));
-    for (const best of Object.values(challengeBestByKey)) {
-      awardedSet.add(best.challengeId);
-    }
-    for (const chRec of challengeHistory) {
-      if (chRec.status === 'completed') awardedSet.add(chRec.challengeId);
-    }
+    const rawCutoff =
+      typeof raw.awardedChallengeCutoffDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.awardedChallengeCutoffDate)
+        ? raw.awardedChallengeCutoffDate
+        : undefined;
+    const isCoveredByCutoff = (id: string): boolean => {
+      if (!rawCutoff) return false;
+      const d = ChallengeEngine.extractDailyDateFromChallengeId(id);
+      return Boolean(d && d <= rawCutoff);
+    };
+    const awardedSet = new Set<string>();
     if (Array.isArray(raw.awardedChallengeIds)) {
       for (const id of raw.awardedChallengeIds) {
-        if (typeof id === 'string' && id.trim()) awardedSet.add(id.slice(0, 80));
+        if (typeof id === 'string' && id.trim() && !isCoveredByCutoff(id)) awardedSet.add(id.slice(0, 80));
       }
     }
-    const awardedChallengeIds = Array.from(awardedSet);
+    for (const cId of Object.keys(completedChallenges)) {
+      if (!isCoveredByCutoff(cId)) awardedSet.add(cId);
+    }
+    for (const best of Object.values(challengeBestByKey)) {
+      if (!isCoveredByCutoff(best.challengeId)) awardedSet.add(best.challengeId);
+    }
+    for (const chRec of challengeHistory) {
+      if (chRec.status === 'completed' && !isCoveredByCutoff(chRec.challengeId)) awardedSet.add(chRec.challengeId);
+    }
+    const prunedAwards = ChallengeEngine.pruneAwardedChallengeIds(
+      Array.from(awardedSet),
+      rawCutoff,
+      MAX_AWARDED_CHALLENGE_IDS
+    );
+    const awardedChallengeIds = prunedAwards.ids;
+    const awardedChallengeCutoffDate = prunedAwards.cutoffDate;
 
     const standardizedTestRecords: NonNullable<PlayerProfile['standardizedTestRecords']> = [];
     if (Array.isArray(raw.standardizedTestRecords)) {
@@ -938,6 +963,7 @@ export class PersistenceService {
       completedChallenges,
       challengeBestByKey,
       awardedChallengeIds,
+      awardedChallengeCutoffDate,
       challengeHistory,
       standardizedTestRecords,
       skillAssessmentDone: Boolean(raw.skillAssessmentDone),

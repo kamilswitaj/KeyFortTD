@@ -664,4 +664,104 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
       expect(localStorage.getItem(STORAGE_KEY)).toBe(snapshotBefore);
     }
   });
+
+  it('bounds completedChallenges (240) and awardedChallengeIds (400) across multi-year daily challenges without re-awarding rewards', () => {
+    const svc = new PersistenceService();
+    const profile = svc.getActiveProfile();
+    const startMs = Date.UTC(2025, 0, 1);
+
+    for (let day = 0; day < 420; day++) {
+      const date = new Date(startMs + day * 86400000);
+      const ch = ChallengeEngine.getDailyChallenge('home_anchors', date);
+      const cfg = ChallengeEngine.buildChallengeSessionConfig(ch, 'standard');
+      const res = ChallengeEngine.recordChallengeCompletion(profile, cfg, {
+        challengeId: ch.id,
+        rulesetVersion: ch.rulesetVersion,
+        profileId: profile.id,
+        timestamp: startMs + day * 86400000,
+        difficulty: 'standard',
+        score: 500 + day,
+        accuracy: 0.95,
+        correctChars: 60,
+        errors: 2,
+        durationSec: 45,
+        wpm: 20,
+        baseDamage: 0,
+        wavesCompleted: 3,
+        towerTypesUsed: ['gun'],
+        heroId: null,
+        status: 'completed',
+      });
+      expect(res.awardedTechPoints).toBe(1);
+    }
+
+    expect(profile.techPoints).toBe(420);
+    expect(Object.keys(profile.completedChallenges ?? {}).length).toBeLessThanOrEqual(240);
+    expect(Object.keys(profile.challengeBestByKey ?? {}).length).toBeLessThanOrEqual(240);
+    expect((profile.awardedChallengeIds ?? []).length).toBeLessThanOrEqual(400);
+    expect(profile.awardedChallengeCutoffDate).toBeDefined();
+
+    // Replaying an evicted old daily challenge (day 0) must still award 0 tech points
+    const day0 = ChallengeEngine.getDailyChallenge('home_anchors', new Date(startMs));
+    const day0Cfg = ChallengeEngine.buildChallengeSessionConfig(day0, 'relaxed');
+    const replayOld = ChallengeEngine.recordChallengeCompletion(profile, day0Cfg, {
+      challengeId: day0.id,
+      rulesetVersion: day0.rulesetVersion,
+      profileId: profile.id,
+      timestamp: startMs + 9999999999,
+      difficulty: 'relaxed',
+      score: 9999,
+      accuracy: 0.99,
+      correctChars: 80,
+      errors: 0,
+      durationSec: 40,
+      wpm: 30,
+      baseDamage: 0,
+      wavesCompleted: 3,
+      towerTypesUsed: ['gun'],
+      heroId: null,
+      status: 'completed',
+    });
+    expect(replayOld.awardedTechPoints).toBe(0);
+    expect(profile.techPoints).toBe(420);
+
+    // Export/import keeps bounded size and cutoff date
+    svc.flushSave();
+    expect(localStorage.getItem(STORAGE_KEY)!.length).toBeLessThan(150_000);
+    const exported = svc.exportSaveJson();
+    expect(exported.length).toBeLessThan(280_000);
+    localStorage.clear();
+    const svc2 = new PersistenceService();
+    expect(svc2.importSaveJson(exported).success).toBe(true);
+    expect(svc2.getActiveProfile().awardedChallengeCutoffDate).toBe(profile.awardedChallengeCutoffDate);
+    expect(svc2.getActiveProfile().techPoints).toBe(420);
+  });
+
+  it('handles corrupted localStorage, QuotaExceededError, and multi-tab storage conflict safely', () => {
+    localStorage.setItem(STORAGE_KEY, '{corrupted_json');
+    const svc = new PersistenceService();
+    expect(svc.getActiveProfile()).toBeDefined();
+    expect(svc.getLastStorageError()).toBeTruthy();
+
+    // QuotaExceededError simulation
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = () => {
+      const err = new Error('QuotaExceededError');
+      err.name = 'QuotaExceededError';
+      throw err;
+    };
+    try {
+      const ok = svc.saveToStorage();
+      expect(ok).toBe(false);
+      expect(svc.getLastStorageError()).toContain('QuotaExceededError');
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+
+    // Multi-tab conflict simulation
+    svc.flushSave();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: CURRENT_SAVE_VERSION, updatedAt: Date.now() + 9999, activeProfileId: 'p1', profiles: {} }));
+    expect(svc.saveToStorage()).toBe(false);
+    expect(svc.getLastStorageError()).toBeTruthy();
+  });
 });
