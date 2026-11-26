@@ -131,22 +131,25 @@ export class WaveSystem {
 
   public static generateSurvivalWave(waveNumber: number): WaveDefinition {
     const isBoss = waveNumber % 5 === 0;
-    const hpScale = 0.9 + Math.pow(waveNumber, 1.24) * 0.16;
+    const hpScale = Math.min(28, 0.9 + Math.pow(waveNumber, 1.22) * 0.16);
     const pool: EnemyType[] = ['scout', 'swarm', 'tank', 'shield', 'ghost', 'splitter', 'regenerator'];
+    if (waveNumber >= 3) pool.push('evasive', 'hover');
+    if (waveNumber >= 5) pool.push('armored_elite', 'support');
+
     const typeA = pool[waveNumber % pool.length];
     const typeB = pool[(waveNumber + 3) % pool.length];
 
     const groups: WaveSpawnGroup[] = [
       {
         enemyType: typeA,
-        count: typeA === 'swarm' ? 10 + waveNumber * 2 : 5 + Math.floor(waveNumber * 1.4),
+        count: Math.min(36, typeA === 'swarm' ? 10 + waveNumber * 2 : 5 + Math.floor(waveNumber * 1.4)),
         intervalSec: typeA === 'swarm' ? 0.65 : 1.15,
         delayBeforeSec: 0.4,
         hpScale,
       },
       {
         enemyType: typeB,
-        count: 4 + Math.floor(waveNumber * 1.1),
+        count: Math.min(26, 4 + Math.floor(waveNumber * 1.1)),
         intervalSec: 1.4,
         delayBeforeSec: 2.0,
         hpScale,

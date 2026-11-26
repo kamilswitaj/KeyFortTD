@@ -1,6 +1,7 @@
 import { TOWERS_DATA } from '../data/towersData';
 import {
   ActiveEnemy,
+  ActiveHero,
   ActiveTower,
   TargetingPriority,
   TowerPad,
@@ -8,7 +9,9 @@ import {
   UpgradeBranch,
   UpgradeTierDefinition,
 } from '../types';
+import { HeroSystem } from './HeroSystem';
 import { ResourceEconomy } from './ResourceEconomy';
+import { TechModifiers, TechnologySystem } from './TechnologySystem';
 
 export interface ComputedTowerStats {
   damage: number;
@@ -65,6 +68,7 @@ export class TowerSystem {
       consecutiveHitsOnTarget: 0,
       totalDamageDealt: 0,
       kills: 0,
+      energyConsumed: 0,
       muzzleFlashTimer: 0,
     };
   }
@@ -189,17 +193,31 @@ export class TowerSystem {
   /**
    * Computes effective stats including nearby tower aura buffs (Reactor / Tesla Quantum Conduit / Ghost Spotters).
    */
-  public static computeEffectiveStats(tower: ActiveTower, allTowers: ActiveTower[]): ComputedTowerStats {
+  public static computeEffectiveStats(
+    tower: ActiveTower,
+    allTowers: ActiveTower[],
+    context?: { hero?: ActiveHero | null; techModifiers?: TechModifiers }
+  ): ComputedTowerStats {
     const base = TowerSystem.computeBaseAndUpgradeStats(tower);
     let totalAuraDamageBonus = 0;
+    let bestCommandAura = 0;
+    let hasNearbyReactor = false;
+    let hasNearbyCommand = false;
 
     for (const other of allTowers) {
       if (other.id === tower.id) continue;
       const otherStats = TowerSystem.computeBaseAndUpgradeStats(other);
       const dist = Math.hypot(other.x - tower.x, other.y - tower.y);
       if (dist <= otherStats.range + 15) {
-        if (otherStats.auraDamageBuff > 0) {
+        if (other.type === 'command') {
+          hasNearbyCommand = true;
+          const cmdAura = Math.max(0.15, otherStats.auraDamageBuff);
+          bestCommandAura = Math.max(bestCommandAura, cmdAura);
+        } else if (otherStats.auraDamageBuff > 0) {
           totalAuraDamageBonus += otherStats.auraDamageBuff;
+        }
+        if (other.type === 'reactor') {
+          hasNearbyReactor = true;
         }
         if (otherStats.grantNearbyGhostDetection) {
           base.detectsGhosts = true;
@@ -207,9 +225,44 @@ export class TowerSystem {
       }
     }
 
-    if (totalAuraDamageBonus > 0) {
-      base.damage = Math.round(base.damage * (1 + Math.min(0.85, totalAuraDamageBonus)));
+    // Command aura is non-stacking; total aura damage bonus is strictly capped at +85%
+    const combinedAura = Math.min(0.85, totalAuraDamageBonus + bestCommandAura);
+    if (combinedAura > 0) {
+      base.damage = Math.round(base.damage * (1 + combinedAura));
     }
+
+    // Technology modifiers (centralized, capped, disabled in standardized challenges)
+    if (context?.techModifiers) {
+      if (TechnologySystem.isKineticTower(tower.type) && context.techModifiers.kineticDamageMultiplier !== 1) {
+        base.damage = Math.round(base.damage * context.techModifiers.kineticDamageMultiplier);
+      }
+      if (context.techModifiers.controlDurationMultiplier !== 1) {
+        if (base.slowDuration > 0) {
+          base.slowDuration = Number((base.slowDuration * context.techModifiers.controlDurationMultiplier).toFixed(2));
+        }
+        if (base.burnDuration > 0) {
+          base.burnDuration = Number((base.burnDuration * context.techModifiers.controlDurationMultiplier).toFixed(2));
+        }
+      }
+    }
+
+    // Guardian Hero passive (+10%) & active Rally (+25%) fire-rate aura
+    if (context?.hero) {
+      const heroRateMult = HeroSystem.getGuardianAuraFireRateMultiplier(tower, context.hero);
+      if (heroRateMult > 1) {
+        base.fireRate = Number((base.fireRate * heroRateMult).toFixed(2));
+      }
+    }
+
+    // Deterministic tower synergies
+    if (tower.type === 'tesla' && hasNearbyReactor) {
+      base.chainCount += 1;
+      base.energyPerShot = Number((base.energyPerShot * 0.82).toFixed(2));
+    }
+    if (tower.type === 'drone' && hasNearbyCommand) {
+      base.fireRate = Number((base.fireRate * 1.18).toFixed(2));
+    }
+
     return base;
   }
 
@@ -223,6 +276,9 @@ export class TowerSystem {
   ): ActiveEnemy | null {
     const candidates = enemies.filter((enemy) => {
       if (enemy.hp <= 0) return false;
+      if (enemy.isFlying && (tower.type === 'cannon' || tower.type === 'flame')) {
+        return false;
+      }
       if (enemy.isGhost && !enemy.isRevealed && !stats.detectsGhosts) {
         return false;
       }

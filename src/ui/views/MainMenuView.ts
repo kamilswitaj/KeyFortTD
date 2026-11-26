@@ -113,12 +113,28 @@ export class MainMenuView {
             </span>
           </div>
 
+          <div class="menu-card" data-nav="training_academy" data-testid="card-training-academy" style="border-top: 3px solid #2dd4bf;">
+            <div>
+              <h3>🎓 ${i18n.pick('Akademia Pisania', 'Training Academy')}</h3>
+              <p style="margin-top:0.35rem;">${i18n.pick('Krótkie treningi klawiszy, dwuznaków, polskich znaków oraz standaryzowane testy prędkości 30s/60s/120s.', 'Short key drills, bigrams, diacritics, and fair 30s/60s/120s standardized typing tests.')}</p>
+            </div>
+            <span style="color:#5eead4; font-weight:700; font-size:0.84rem;">→ ${i18n.pick('Ćwiczenia i Testy Standaryzowane', 'Drills & Standardized Tests')}</span>
+          </div>
+
+          <div class="menu-card" data-nav="challenges" data-testid="card-challenges" style="border-top: 3px solid #fb923c;">
+            <div>
+              <h3>⚔️ ${i18n.pick('Wyzwania i Bohaterowie', 'Challenges & Heroes')}</h3>
+              <p style="margin-top:0.35rem;">${i18n.pick('Wyzwania dzienne i tygodniowe, wybór Bohatera Bastionu oraz drzewo specjalizacji.', 'Daily & weekly deterministic challenges, Bastion Heroes, and Tech Specializations.')}</p>
+            </div>
+            <span style="color:#fdba74; font-weight:700; font-size:0.84rem;">→ ${i18n.pick('4 Bohaterów • Wyzwania Dnia', '4 Heroes • Daily Challenges')}</span>
+          </div>
+
           <div class="menu-card" data-nav="sandbox_setup" data-testid="card-sandbox" style="border-top: 3px solid #facc15;">
             <div>
               <h3>🧪 ${i18n.t('menu.sandbox')}</h3>
               <p style="margin-top:0.35rem;">${i18n.t('menu.sandboxDesc')}</p>
             </div>
-            <span style="color:#facc15; font-weight:700; font-size:0.84rem;">→ ${i18n.pick('Wszystkie 6 wież i ulepszenia T3', 'All 6 towers & Tier 3 upgrades')}</span>
+            <span style="color:#facc15; font-weight:700; font-size:0.84rem;">→ ${i18n.pick('Wszystkie 10 wież i ulepszenia T3', 'All 10 towers & Tier 3 upgrades')}</span>
           </div>
 
           <div class="menu-card" data-nav="family_dashboard" data-testid="card-family-dashboard" style="border-top: 3px solid #f43f5e;">

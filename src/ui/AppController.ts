@@ -1,9 +1,16 @@
+import { SvgArtwork } from '../assets/SvgArtwork';
+import { HEROES_DATA } from '../data/heroesData';
 import { getMissionById, MISSIONS_DATA } from '../data/curriculumData';
 import { LocalizationService } from '../i18n/LocalizationService';
 import { BattlefieldRenderer } from '../rendering/BattlefieldRenderer';
 import { AudioSystem } from '../services/AudioSystem';
 import { PersistenceService } from '../services/PersistenceService';
 import { AchievementSystem } from '../systems/AchievementSystem';
+import {
+  ChallengeEngine,
+  ChallengeSessionConfig,
+  ChallengeTier,
+} from '../systems/ChallengeEngine';
 import { GameSessionEngine } from '../systems/GameSessionEngine';
 import { MissionOutcomeEvaluation, ProgressionEngine } from '../systems/ProgressionEngine';
 import {
@@ -11,12 +18,15 @@ import {
   FamilySortMetric,
   StatisticsEngine,
 } from '../systems/StatisticsEngine';
+import { TechnologySystem } from '../systems/TechnologySystem';
+import { TrainingAcademyEngine, TrainingActivityKind } from '../systems/TrainingAcademyEngine';
 import { WaveSystem } from '../systems/WaveSystem';
 import {
   AchievementDefinition,
   DifficultyLevel,
   EnemyType,
   GameMode,
+  HeroId,
   PlayerProfile,
   ScreenId,
   SessionCompletionStatus,
@@ -27,6 +37,7 @@ import {
 } from '../types';
 import { escapeHtml } from '../utils/escapeHtml';
 import { CampaignMapView } from './views/CampaignMapView';
+import { ChallengesView } from './views/ChallengesView';
 import { DashboardViews } from './views/DashboardViews';
 import {
   FamilyDashboardState,
@@ -34,6 +45,7 @@ import {
 } from './views/FamilyDashboardView';
 import { GameplayView } from './views/GameplayView';
 import { MainMenuView } from './views/MainMenuView';
+import { TrainingAcademyView, TrainingViewState } from './views/TrainingAcademyView';
 
 interface HudSnapshot {
   lives: string;
@@ -88,6 +100,19 @@ export class AppController {
     leaderboardMissionId: 'w1_m1',
     leaderboardDifficulty: 'standard',
   };
+
+  private trainingState: TrainingViewState = {
+    tab: 'drills',
+    selectedActivity: 'weak_keys',
+    stdDuration: 60,
+    stdPool: 'beginner',
+    activeEngine: null,
+    lastResult: null,
+  };
+  private trainingTickIntervalId: number | null = null;
+  private selectedChallengeTier: ChallengeTier | null = null;
+  private lastChallengeConfig: ChallengeSessionConfig | null = null;
+  private trainingLastTickMs = 0;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -153,6 +178,7 @@ export class AppController {
   }
 
   public navigateTo(screen: ScreenId): void {
+    if (screen !== 'training_academy') this.finishTrainingOrAssessment(true, false);
     if (this.currentScreen === 'gameplay' && screen !== 'gameplay' && this.activeSession) {
       if (!this.activeSession.isFinalized()) {
         this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
@@ -185,6 +211,7 @@ export class AppController {
       return;
     }
 
+    this.finishTrainingOrAssessment(true, false);
     // Finalize any previous unfinished session before starting a new one
     if (this.activeSession && !this.activeSession.isFinalized()) {
       this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
@@ -249,6 +276,62 @@ export class AppController {
     this.newlyUnlockedAchievements = [];
     this.currentScreen = 'gameplay';
     this.renderCurrentScreen();
+    this.audio.startMusic(mission.isBossMission ? 'boss' : 'combat');
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo(0, 0);
+    }
+    this.startGameLoop();
+  }
+
+  public startChallenge(frequency: 'daily' | 'weekly', tier?: ChallengeTier): void {
+    const profile = this.persistence.getActiveProfile();
+    const chosenTier = tier ?? this.selectedChallengeTier ?? ChallengeEngine.getPlayerEligibleTier(profile);
+    if (!ChallengeEngine.isTierEligible(profile, chosenTier)) {
+      return;
+    }
+
+    const challenge =
+      frequency === 'weekly'
+        ? ChallengeEngine.getWeeklyChallenge(chosenTier)
+        : ChallengeEngine.getDailyChallenge(chosenTier);
+    const challengeConfig = ChallengeEngine.buildChallengeSessionConfig(
+      challenge,
+      profile.settings.difficulty
+    );
+    this.launchChallengeFromConfig(challengeConfig);
+  }
+
+  public launchChallengeFromConfig(challengeConfig: ChallengeSessionConfig): void {
+    const profile = this.persistence.getActiveProfile();
+    const baseMission = getMissionById(challengeConfig.sourceMissionId) ?? MISSIONS_DATA[0];
+
+    this.finishTrainingOrAssessment(true, false);
+    if (this.activeSession && !this.activeSession.isFinalized()) {
+      this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
+    }
+    this.persistence.flushSave();
+    this.stopGameLoop();
+
+    this.lastChallengeConfig = challengeConfig;
+    this.activeSession = new GameSessionEngine({
+      mode: 'challenge',
+      mission: baseMission,
+      sourceMissionId: baseMission.id,
+      profile,
+      challengeConfig,
+      initialGameSpeed: profile.settings.defaultGameSpeed,
+    });
+
+    this.activeSession.setSelectedPadIndex(0);
+    this.sessionOutcomeProcessed = false;
+    this.lastFollowUpState = false;
+    this.hadActiveErrorHighlight = false;
+    this.lastHudSnapshot = null;
+    this.lastOutcome = null;
+    this.newlyUnlockedAchievements = [];
+    this.currentScreen = 'gameplay';
+    this.renderCurrentScreen();
+    this.audio.startMusic(baseMission.isBossMission ? 'boss' : 'combat');
     if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
       window.scrollTo(0, 0);
     }
@@ -394,6 +477,58 @@ export class AppController {
           maxCombo: typing.getMaxCombo(),
           activeTowers: session.getTowers(),
         });
+      } else if (session.mode === 'challenge' && session.challengeConfig) {
+        const evalRes = ChallengeEngine.evaluateChallengeCompletion(session.challengeConfig, {
+          remainingLives: session.getLives(),
+          cumulativeBaseDamage: session.getCumulativeBaseDamage(),
+          correctChars: charsTyped,
+          accuracy: typing.getAccuracy(),
+          usedTowerTypes: session.getUsedTowerTypes(),
+        });
+        status = evalRes.passed ? 'victory' : 'defeat';
+        stars = evalRes.passed ? 3 : 0;
+        if (evalRes.passed) {
+          this.audio.playVictory();
+        } else {
+          this.audio.playDefeat();
+        }
+        const { awardedTechPoints } = ChallengeEngine.recordChallengeCompletion(
+          ownerProfile,
+          session.challengeConfig,
+          {
+            challengeId: session.challengeConfig.challengeId,
+            rulesetVersion: session.challengeConfig.rulesetVersion,
+            profileId: ownerProfile.id,
+            timestamp: Date.now(),
+            difficulty: session.difficulty,
+            score: session.getScore(),
+            accuracy: typing.getAccuracy(),
+            correctChars: charsTyped,
+            errors,
+            durationSec,
+            wpm: typing.getWpm(),
+            baseDamage: session.getCumulativeBaseDamage(),
+            wavesCompleted: session.waveSystem.getCompletedWavesCount(),
+            towerTypesUsed: session.getUsedTowerTypes(),
+            heroId: null,
+            status: evalRes.passed ? 'completed' : 'failed',
+          }
+        );
+        this.lastOutcome = {
+          victory: evalRes.passed,
+          tacticalVictory: session.getLives() > 0,
+          educationalCompleted: evalRes.passed,
+          stars: evalRes.passed ? 3 : 0,
+          xpEarned: evalRes.passed ? 120 + awardedTechPoints * 50 : 30,
+          leveledUp: false,
+          newLevel: ownerProfile.level,
+          newlyUnlockedTowers: [],
+          keyObjectives: [],
+          masterySummary: [],
+          reasonPl: evalRes.reasonPl,
+          reasonEn: evalRes.reasonEn,
+        };
+        ProgressionEngine.awardXp(ownerProfile, this.lastOutcome.xpEarned);
       } else if (session.mode === 'survival') {
         status = 'defeat';
         const waveReached = session.waveSystem.getCompletedWavesCount();
@@ -476,6 +611,8 @@ export class AppController {
   }
 
   private executeProfileSwitch(targetProfileId: string, startPlayAfterSwitch: boolean = false): void {
+    this.finishTrainingOrAssessment(true, false);
+    this.trainingState.lastResult = null;
     if (this.activeSession && !this.activeSession.isFinalized()) {
       this.finalizeSession(this.activeSession, this.activeSession.isSessionOver() ? 'completed' : 'abandoned');
     }
@@ -640,6 +777,7 @@ export class AppController {
   private bindGlobalKeyboardAndFocus(): void {
     // Reload/close must retain practice just like explicitly leaving a mission.
     window.addEventListener('pagehide', () => {
+      this.finishTrainingOrAssessment(true, false);
       const session = this.activeSession;
       if (session && !session.isFinalized()) {
         this.finalizeSession(session, session.isSessionOver() ? 'completed' : 'abandoned');
@@ -653,6 +791,9 @@ export class AppController {
       if (event.persisted) this.renderCurrentScreen();
     });
     window.addEventListener('blur', () => {
+      const training = this.trainingState.activeEngine;
+      if (training?.mode === 'assessment' && training.started) this.finishTrainingOrAssessment(true);
+      else training?.typingEngine.markIdleBreak();
       if (this.activeSession) {
         this.activeSession.typingEngine.markIdleBreak();
         // Auto-pause active wave combat when window loses focus so the player is not penalized
@@ -661,11 +802,15 @@ export class AppController {
           this.updateGameplayHudInPlace();
         }
       }
+      this.audio.stopMusic();
       this.persistence.flushSave();
     });
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
+        const training = this.trainingState.activeEngine;
+        if (training?.mode === 'assessment' && training.started) this.finishTrainingOrAssessment(true);
+        else training?.typingEngine.markIdleBreak();
         if (this.activeSession) {
           this.activeSession.typingEngine.markIdleBreak();
           if (this.activeSession.waveSystem.isWaveActive() && !this.activeSession.isSessionOver()) {
@@ -678,6 +823,30 @@ export class AppController {
     });
 
     window.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (
+        this.currentScreen === 'training_academy' &&
+        this.trainingState.activeEngine &&
+        !this.trainingState.activeEngine.completed
+      ) {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+          return;
+        }
+        if (e.isComposing || e.metaKey || target?.isContentEditable || (e.ctrlKey && !e.getModifierState('AltGraph') && !e.altKey) || (e.altKey && !e.getModifierState('AltGraph') && !e.ctrlKey)) {
+          return;
+        }
+        if (e.key === ' ' || e.key === '/' || e.key === "'") {
+          e.preventDefault();
+        }
+        if (this.advanceTrainingClock()) return;
+        const tRes = this.trainingState.activeEngine.handleKey(e.key, Date.now(), e.repeat);
+        if (tRes && !tRes.ignored) {
+          this.audio.playKeystroke(tRes.isCorrect, tRes.combo);
+          this.renderCurrentScreen();
+        }
+        return;
+      }
+
       if (this.currentScreen !== 'gameplay' || !this.activeSession) return;
       if (this.container.querySelector('[data-testid="switch-profile-confirm-modal"]')) return;
       const target = e.target as HTMLElement | null;
@@ -881,7 +1050,7 @@ export class AppController {
     return `
       <header class="top-header">
         <div class="brand-group" data-action="go-menu" data-testid="brand-home">
-          <div class="brand-logo">🏰</div>
+          ${SvgArtwork.brandLogo(28)}
           <div>
             <div class="brand-title">${this.i18n.t('app.title')}</div>
             <div class="brand-tagline">${this.i18n.t('app.tagline')}</div>
@@ -889,29 +1058,35 @@ export class AppController {
         </div>
 
         <nav class="top-nav-links">
-          <button class="nav-btn ${this.currentScreen === 'main_menu' ? 'active' : ''}" data-nav="main_menu" data-testid="nav-menu">
-            🏠 ${this.i18n.t('nav.backToMenu')}
+          <button class="nav-btn ${this.currentScreen === 'main_menu' ? 'active' : ''}" data-nav="main_menu" data-testid="nav-menu" title="${escapeHtml(this.i18n.t('nav.backToMenu'))}">
+            🏠 ${this.i18n.pick('Menu', 'Menu')}
           </button>
-          <button class="nav-btn ${this.currentScreen === 'campaign_map' ? 'active' : ''}" data-nav="campaign_map" data-testid="nav-campaign">
-            🗺️ ${this.i18n.t('menu.campaign')}
+          <button class="nav-btn ${this.currentScreen === 'campaign_map' ? 'active' : ''}" data-nav="campaign_map" data-testid="nav-campaign" title="${escapeHtml(this.i18n.t('menu.campaign'))}">
+            🗺️ ${this.i18n.pick('Kampania', 'Campaign')}
           </button>
-          <button class="nav-btn ${this.currentScreen === 'survival_setup' ? 'active' : ''}" data-nav="survival_setup" data-testid="nav-survival">
-            ♾️ ${this.i18n.t('menu.survival')}
+          <button class="nav-btn ${this.currentScreen === 'training_academy' ? 'active' : ''}" data-nav="training_academy" data-testid="nav-training-academy" title="${escapeHtml(this.i18n.pick('Akademia Pisania i Testy', 'Training Academy & Tests'))}">
+            🎓 ${this.i18n.pick('Akademia', 'Academy')}
           </button>
-          <button class="nav-btn ${this.currentScreen === 'sandbox_setup' ? 'active' : ''}" data-nav="sandbox_setup" data-testid="nav-sandbox">
-            🧪 ${this.i18n.t('menu.sandbox')}
+          <button class="nav-btn ${this.currentScreen === 'challenges' ? 'active' : ''}" data-nav="challenges" data-testid="nav-challenges" title="${escapeHtml(this.i18n.pick('Wyzwania, Bohaterowie i Technologia', 'Challenges, Heroes & Tech'))}">
+            ⚔️ ${this.i18n.pick('Wyzwania', 'Challenges')}
           </button>
-          <button class="nav-btn ${this.currentScreen === 'family_dashboard' ? 'active' : ''}" data-nav="family_dashboard" data-testid="nav-family-dashboard">
-            👨‍👩‍👧 ${this.i18n.pick('Ranking rodzinny', 'Family')}
+          <button class="nav-btn ${this.currentScreen === 'survival_setup' ? 'active' : ''}" data-nav="survival_setup" data-testid="nav-survival" title="${escapeHtml(this.i18n.t('menu.survival'))}">
+            ♾️ ${this.i18n.pick('Przetrwanie', 'Survival')}
           </button>
-          <button class="nav-btn ${this.currentScreen === 'statistics' ? 'active' : ''}" data-nav="statistics" data-testid="nav-statistics">
-            📊 ${this.i18n.t('menu.statistics')}
+          <button class="nav-btn ${this.currentScreen === 'sandbox_setup' ? 'active' : ''}" data-nav="sandbox_setup" data-testid="nav-sandbox" title="${escapeHtml(this.i18n.t('menu.sandbox'))}">
+            🧪 ${this.i18n.pick('Sandbox', 'Sandbox')}
           </button>
-          <button class="nav-btn ${this.currentScreen === 'achievements' ? 'active' : ''}" data-nav="achievements" data-testid="nav-achievements">
-            🏆 ${this.i18n.t('menu.achievements')}
+          <button class="nav-btn ${this.currentScreen === 'family_dashboard' ? 'active' : ''}" data-nav="family_dashboard" data-testid="nav-family-dashboard" title="${escapeHtml(this.i18n.pick('Ranking rodzinny', 'Family Dashboard'))}">
+            👨‍👩‍👧 ${this.i18n.pick('Rodzina', 'Family')}
           </button>
-          <button class="nav-btn ${this.currentScreen === 'settings' ? 'active' : ''}" data-nav="settings" data-testid="nav-settings">
-            ⚙️ ${this.i18n.t('menu.settings')}
+          <button class="nav-btn ${this.currentScreen === 'statistics' ? 'active' : ''}" data-nav="statistics" data-testid="nav-statistics" title="${escapeHtml(this.i18n.t('menu.statistics'))}">
+            📊 ${this.i18n.pick('Statystyki', 'Stats')}
+          </button>
+          <button class="nav-btn ${this.currentScreen === 'achievements' ? 'active' : ''}" data-nav="achievements" data-testid="nav-achievements" title="${escapeHtml(this.i18n.t('menu.achievements'))}">
+            🏆 ${this.i18n.pick('Nagrody', 'Rewards')}
+          </button>
+          <button class="nav-btn ${this.currentScreen === 'settings' ? 'active' : ''}" data-nav="settings" data-testid="nav-settings" title="${escapeHtml(this.i18n.t('menu.settings'))}">
+            ⚙️ ${this.i18n.pick('Opcje', 'Settings')}
           </button>
         </nav>
 
@@ -938,6 +1113,10 @@ export class AppController {
         return MainMenuView.renderHtml(profile, allProfiles, this.i18n);
       case 'campaign_map':
         return CampaignMapView.renderHtml(this.selectedWorldId, profile, this.i18n);
+      case 'training_academy':
+        return TrainingAcademyView.renderHtml(profile, allProfiles, this.trainingState, this.i18n);
+      case 'challenges':
+        return ChallengesView.renderHtml(profile, allProfiles, this.selectedChallengeTier, this.i18n);
       case 'gameplay':
         return this.activeSession
           ? GameplayView.renderGameplayLayoutHtml(
@@ -982,9 +1161,18 @@ export class AppController {
     );
 
     modalContainer.querySelector('[data-action="modal-back-map"]')?.addEventListener('click', () => {
+      this.audio.stopMusic();
       this.navigateTo('campaign_map');
     });
+    modalContainer.querySelector('[data-action="modal-back-challenges"]')?.addEventListener('click', () => {
+      this.audio.stopMusic();
+      this.navigateTo('challenges');
+    });
     modalContainer.querySelector('[data-action="modal-retry"]')?.addEventListener('click', () => {
+      if (session.mode === 'challenge' && session.challengeConfig) {
+        this.launchChallengeFromConfig(session.challengeConfig);
+        return;
+      }
       // Preserve original sourceMissionId, mode, and launchOptions for Survival & Sandbox retries!
       this.startMission(session.sourceMissionId, session.mode, session.launchOptions);
     });
@@ -1156,7 +1344,28 @@ export class AppController {
       if (wpmEl) wpmEl.textContent = nextSnap.wpm;
     }
 
+    this.updateHeroHudInPlace();
     this.lastHudSnapshot = nextSnap;
+  }
+
+  private updateHeroHudInPlace(): void {
+    const session = this.activeSession;
+    const hero = session?.getHero();
+    if (!session || !hero) return;
+    const def = HEROES_DATA[hero.id];
+    const xpText = `Lv ${hero.level} • ${hero.xp}/${hero.level * 120} XP`;
+    const xp = this.container.querySelector('[data-testid="hero-xp"]');
+    if (xp && xp.textContent !== xpText) xp.textContent = xpText;
+    for (const slot of [0, 1] as const) {
+      const btn = this.container.querySelector<HTMLButtonElement>(`[data-hero-ability="${slot}"]`);
+      if (!btn) continue;
+      const cd = Math.ceil(hero.abilityCooldowns[slot]);
+      const disabled = !session.canTriggerHeroAbility(slot);
+      if (btn.disabled !== disabled) btn.disabled = disabled;
+      const meta = btn.querySelector('.ability-btn-meta');
+      const text = cd > 0 ? `${cd}s` : `${def.abilities[slot].energyCost}⚡`;
+      if (meta && meta.textContent !== text) meta.textContent = text;
+    }
   }
 
   private clearConsoleErrorHighlightInPlace(): void {
@@ -1250,6 +1459,16 @@ export class AppController {
         }
       });
     });
+
+    root.querySelectorAll('[data-hero-ability]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const slot = Number((e.currentTarget as HTMLElement).getAttribute('data-hero-ability')) as 0 | 1;
+        if (this.activeSession?.triggerHeroAbility(slot)) {
+          this.updateGameplayHudInPlace();
+          this.updateSidebarInPlace();
+        }
+      });
+    });
   }
 
   private attachSidebarListeners(root: HTMLElement): void {
@@ -1279,6 +1498,16 @@ export class AppController {
           | 'orbital';
         if (this.activeSession?.triggerTacticalAbility(ability)) {
           this.updateGameplayHudInPlace();
+        }
+      });
+    });
+
+    root.querySelectorAll('[data-hero-ability]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const slot = Number((e.currentTarget as HTMLElement).getAttribute('data-hero-ability')) as 0 | 1;
+        if (this.activeSession?.triggerHeroAbility(slot)) {
+          this.updateGameplayHudInPlace();
+          this.updateSidebarInPlace();
         }
       });
     });
@@ -1519,6 +1748,99 @@ export class AppController {
       this.startMission(mId, 'sandbox', { unlimitedGold: unlimGold, unlimitedEnergy: unlimEnergy });
     });
 
+    // Training Academy & Standardized Tests listeners
+    this.container.querySelectorAll('[data-academy-tab]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const tab = (e.currentTarget as HTMLElement).getAttribute('data-academy-tab') as 'drills' | 'standardized';
+        this.trainingState.tab = tab;
+        this.renderCurrentScreen();
+      });
+    });
+
+    this.container.querySelectorAll('[data-start-training]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const kind = (e.currentTarget as HTMLElement).getAttribute('data-start-training') as TrainingActivityKind;
+        this.startTrainingOrAssessment('training', kind);
+      });
+    });
+
+    this.container.querySelectorAll('[data-std-dur]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        this.trainingState.stdDuration = Number((e.currentTarget as HTMLElement).getAttribute('data-std-dur')) as 0 | 30 | 60 | 120;
+        this.renderCurrentScreen();
+      });
+    });
+
+    this.container.querySelectorAll('[data-std-pool]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        this.trainingState.stdPool = (e.currentTarget as HTMLElement).getAttribute('data-std-pool') as 'beginner' | 'full';
+        this.renderCurrentScreen();
+      });
+    });
+
+    this.container.querySelector('[data-action="start-standardized-test"]')?.addEventListener('click', () => {
+      this.startTrainingOrAssessment('assessment');
+    });
+
+    this.container.querySelector('[data-action="finish-training"]')?.addEventListener('click', () => {
+      this.finishTrainingOrAssessment();
+    });
+
+    // Challenges, Heroes & Tech Tree listeners
+    this.container.querySelectorAll('[data-challenge-tier]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const tier = (e.currentTarget as HTMLElement).getAttribute('data-challenge-tier') as ChallengeTier;
+        const profile = this.persistence.getActiveProfile();
+        if (ChallengeEngine.isTierEligible(profile, tier)) {
+          this.selectedChallengeTier = tier;
+          this.renderCurrentScreen();
+        }
+      });
+    });
+
+    this.container.querySelectorAll('[data-start-challenge]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const freq = (e.currentTarget as HTMLElement).getAttribute('data-start-challenge') as 'daily' | 'weekly';
+        const tier = (e.currentTarget as HTMLElement).getAttribute('data-challenge-tier') as ChallengeTier;
+        this.startChallenge(freq, tier);
+      });
+    });
+
+    this.container.querySelectorAll('[data-unlock-tech]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const techId = (e.currentTarget as HTMLElement).getAttribute('data-unlock-tech');
+        if (!techId) return;
+        const profile = this.persistence.getActiveProfile();
+        const res = TechnologySystem.purchaseTechnology(profile, techId);
+        if (res.success) {
+          this.audio.playUpgrade();
+          this.persistence.saveToStorage();
+          this.renderCurrentScreen();
+        }
+      });
+    });
+
+    this.container.querySelectorAll('[data-select-hero]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const heroId = (e.currentTarget as HTMLElement).getAttribute('data-select-hero') as HeroId;
+        const profile = this.persistence.getActiveProfile();
+        if ((profile.unlockedHeroes ?? []).includes(heroId)) {
+          profile.selectedHeroId = heroId;
+          profile.explicitNoHero = false;
+          this.persistence.saveToStorage();
+          this.renderCurrentScreen();
+        }
+      });
+    });
+
+    this.container.querySelector('[data-action="clear-hero"]')?.addEventListener('click', () => {
+      const profile = this.persistence.getActiveProfile();
+      profile.selectedHeroId = null;
+      profile.explicitNoHero = true;
+      this.persistence.saveToStorage();
+      this.renderCurrentScreen();
+    });
+
     // Family Dashboard listeners
     this.container.querySelectorAll('[data-sort-metric]').forEach((th) => {
       th.addEventListener('click', (e) => {
@@ -1747,5 +2069,62 @@ export class AppController {
       profile.settings.reducedMotion = rmCheck.checked;
       this.persistence.saveToStorage();
     });
+  }
+
+  private startTrainingOrAssessment(mode: 'training' | 'assessment', activityKind?: TrainingActivityKind): void {
+    this.finishTrainingOrAssessment(true, false);
+    const profile = this.persistence.getActiveProfile();
+    if (this.trainingTickIntervalId !== null) {
+      window.clearInterval(this.trainingTickIntervalId);
+      this.trainingTickIntervalId = null;
+    }
+    this.trainingState.lastResult = null;
+    if (activityKind) this.trainingState.selectedActivity = activityKind;
+    this.trainingState.activeEngine = new TrainingAcademyEngine({
+      profile,
+      mode,
+      activityKind: this.trainingState.selectedActivity,
+      durationSec: mode === 'assessment' ? this.trainingState.stdDuration : 0,
+      pool: this.trainingState.stdPool,
+      language: profile.settings.language,
+    });
+    this.trainingLastTickMs = performance.now();
+    this.trainingTickIntervalId = window.setInterval(() => {
+      const eng = this.trainingState.activeEngine;
+      if (!eng || this.currentScreen !== 'training_academy') return;
+      if (this.advanceTrainingClock()) return;
+      if (eng.durationSec > 0) {
+        const timerEl = document.getElementById('training-timer');
+        if (timerEl) {
+          timerEl.textContent = `${Math.max(0, Math.ceil(eng.durationSec - eng.elapsedSec))}s`;
+        }
+      }
+    }, 100);
+    this.renderCurrentScreen();
+  }
+
+  private advanceTrainingClock(): boolean {
+    const now = performance.now();
+    const dt = Math.max(0, (now - this.trainingLastTickMs) / 1000);
+    this.trainingLastTickMs = now;
+    if (this.trainingState.activeEngine?.tick(dt)) {
+      this.finishTrainingOrAssessment();
+      return true;
+    }
+    return false;
+  }
+
+  private finishTrainingOrAssessment(abandoned = false, render = true): void {
+    if (this.trainingTickIntervalId !== null) {
+      window.clearInterval(this.trainingTickIntervalId);
+      this.trainingTickIntervalId = null;
+    }
+    const eng = this.trainingState.activeEngine;
+    if (eng) {
+      this.trainingState.lastResult = eng.finishAndRecord(abandoned);
+      this.trainingState.activeEngine = null;
+      this.persistence.saveToStorage();
+      if (render) this.renderCurrentScreen();
+    }
   }
 }

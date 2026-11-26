@@ -1,11 +1,13 @@
 export type Language = 'pl' | 'en';
 
-export type GameMode = 'campaign' | 'survival' | 'sandbox';
+export type GameMode = 'campaign' | 'survival' | 'sandbox' | 'training' | 'assessment' | 'challenge';
 
 export type ScreenId =
   | 'main_menu'
   | 'campaign_map'
   | 'gameplay'
+  | 'training_academy'
+  | 'challenges'
   | 'survival_setup'
   | 'sandbox_setup'
   | 'statistics'
@@ -138,7 +140,61 @@ export interface DifficultyMissionRecord {
   timesCompleted: number;
 }
 
-export type TowerType = 'gun' | 'cannon' | 'frost' | 'tesla' | 'sniper' | 'reactor';
+export type TowerType =
+  | 'gun'
+  | 'cannon'
+  | 'frost'
+  | 'tesla'
+  | 'sniper'
+  | 'reactor'
+  | 'flame'
+  | 'drone'
+  | 'laser'
+  | 'command';
+
+export type HeroId = 'guardian' | 'engineer' | 'ranger' | 'arcanist';
+
+export interface HeroAbilityDefinition {
+  id: string;
+  namePl: string;
+  nameEn: string;
+  descPl: string;
+  descEn: string;
+  energyCost: number;
+  cooldownSec: number;
+}
+
+export interface HeroDefinition {
+  id: HeroId;
+  namePl: string;
+  nameEn: string;
+  titlePl: string;
+  titleEn: string;
+  descPl: string;
+  descEn: string;
+  passivePl: string;
+  passiveEn: string;
+  unlockWorld: number;
+  color: string;
+  accentColor: string;
+  baseDamage: number;
+  baseRange: number;
+  fireRate: number;
+  abilities: [HeroAbilityDefinition, HeroAbilityDefinition];
+}
+
+export interface ActiveHero {
+  id: HeroId;
+  x: number;
+  y: number;
+  level: number;
+  xp: number;
+  cooldownRemaining: number;
+  abilityCooldowns: [number, number];
+  angle: number;
+  muzzleFlashTimer: number;
+  activeBuffTimer: number;
+}
 
 export type TargetingPriority = 'first' | 'last' | 'strongest' | 'nearest';
 
@@ -230,6 +286,7 @@ export interface ActiveTower {
   consecutiveHitsOnTarget: number;
   totalDamageDealt: number;
   kills: number;
+  energyConsumed?: number;
   muzzleFlashTimer: number;
 }
 
@@ -241,6 +298,10 @@ export type EnemyType =
   | 'ghost'
   | 'splitter'
   | 'regenerator'
+  | 'armored_elite'
+  | 'evasive'
+  | 'hover'
+  | 'support'
   | 'boss';
 
 export interface EnemyDefinition {
@@ -261,6 +322,9 @@ export interface EnemyDefinition {
   regenPerSec: number;
   splitCount: number;
   isBoss: boolean;
+  isFlying?: boolean;
+  evadeChance?: number;
+  supportAuraRadius?: number;
 }
 
 export interface ActiveEnemy {
@@ -302,6 +366,11 @@ export interface ActiveEnemy {
   brittleTimer: number;
   spotterBonus: number;
   spotterTimer: number;
+  isFlying?: boolean;
+  hitFlashTimer?: number;
+  facingAngle?: number;
+  thermalShockCooldown?: number;
+  evadeTimer?: number;
 }
 
 export interface WaveSpawnGroup {
@@ -398,7 +467,7 @@ export interface MissionDefinition {
 
 export interface ProjectileEffect {
   id: string;
-  kind: 'bullet' | 'shell' | 'frost_pulse' | 'lightning' | 'sniper_beam' | 'shockwave' | 'orbital';
+  kind: 'bullet' | 'shell' | 'frost_pulse' | 'lightning' | 'sniper_beam' | 'shockwave' | 'orbital' | 'flame' | 'laser_beam' | 'drone_bolt';
   fromX: number;
   fromY: number;
   toX: number;
@@ -494,6 +563,25 @@ export interface AppSettings {
   showWpmStat: boolean;
 }
 
+export interface ChallengeCompletionRecord {
+  challengeId: string;
+  rulesetVersion: number;
+  profileId: string;
+  timestamp: number;
+  difficulty: DifficultyLevel;
+  score: number;
+  accuracy: number;
+  correctChars: number;
+  errors: number;
+  durationSec: number;
+  wpm: number;
+  baseDamage: number;
+  wavesCompleted: number;
+  towerTypesUsed: TowerType[];
+  heroId: HeroId | null;
+  status: 'completed' | 'failed';
+}
+
 export interface PlayerProfile {
   id: string;
   name: string;
@@ -525,6 +613,39 @@ export interface PlayerProfile {
   sessionHistory: SessionHistoryEntry[];
   dailyStats: Record<string, DailyPracticeAggregate>;
   settings: AppSettings;
+  selectedHeroId?: HeroId | null;
+  explicitNoHero?: boolean;
+  unlockedHeroes?: HeroId[];
+  heroXp?: Partial<Record<HeroId, number>>;
+  techPoints?: number;
+  unlockedTechs?: string[];
+  completedChallenges?: Record<
+    string,
+    {
+      score: number;
+      accuracy: number;
+      timestamp: number;
+      rulesetVersion?: number;
+      difficulty?: DifficultyLevel;
+      wpm?: number;
+      baseDamage?: number;
+      wavesCompleted?: number;
+      towerTypesUsed?: TowerType[];
+    }
+  >;
+  challengeHistory?: ChallengeCompletionRecord[];
+  standardizedTestRecords?: Array<{
+    rulesVersion?: number;
+    durationSec: 30 | 60 | 120 | 0;
+    pool: 'beginner' | 'full';
+    language: Language;
+    wpm: number;
+    accuracy: number;
+    consistency: number;
+    timestamp: number;
+  }>;
+  skillAssessmentDone?: boolean;
+  skillLevelChoice?: 'beginner' | 'intermediate' | 'advanced';
 }
 
 export interface SaveDataSchema {

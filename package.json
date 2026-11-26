@@ -11,9 +11,6 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test"
   },
-  "dependencies": {
-    "phaser": "^3.87.0"
-  },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
     "jsdom": "^25.0.1",
