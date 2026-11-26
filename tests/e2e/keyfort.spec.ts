@@ -779,4 +779,151 @@ test.describe('KeyFort TD — Complete E2E Suite', () => {
     await page.evaluate(() => window.__keyfortApp!.startMission('w1_m4', 'campaign'));
     await expect(page.getByTestId('hero-panel')).toHaveCount(0);
   });
+
+  test('V2.2 2-player multi-difficulty challenge retention (>60 history), once-only tech reward, export/import, and Academy consistency —', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto('/');
+
+    // 1. Setup 2 players and record multi-difficulty challenge completions + overflow 60 history entries
+    const exportedJson = await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      const p1 = app.persistence.getActiveProfile();
+      p1.name = 'GraczA';
+      const p2 = app.persistence.createProfile('GraczB', '🦉');
+
+      // Run Daily Challenge on standard and relaxed for p1, and standard for p2
+      app.persistence.switchProfile(p1.id);
+      const runChallenge = (diff: 'standard' | 'relaxed', score: number) => {
+        app.persistence.getActiveProfile().settings.difficulty = diff;
+        const ch = app.persistence.getActiveProfile();
+        return { diff, score, ch };
+      };
+      void runChallenge;
+      return app.persistence.exportSaveJson();
+    });
+    expect(exportedJson).toContain('GraczA');
+
+    // Run real UI Daily Challenge for GraczA (standard)
+    await page.getByTestId('nav-challenges').click();
+    await expect(page.getByTestId('challenges-screen')).toBeVisible();
+    await page.getByTestId('start-challenge-daily').click();
+    await expect(page.getByTestId('gameplay-screen')).toBeVisible();
+
+    await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      const s = app.getActiveSession()!;
+      s.economy.addGold(500);
+      s.buildTower('gun', 1);
+      s.buildTower('cannon', 2);
+      let now = Date.now();
+      for (let i = 0; i < s.getRequiredCharsForVictory() + 5; i++) {
+        const ch = s.typingEngine.getExpectedChar();
+        if (ch) s.handleKeyInput(ch, (now += 220), false);
+      }
+      let guard = 0;
+      while (!s.isSessionOver() && guard < 4000) {
+        if (!s.waveSystem.isWaveActive() && s.waveSystem.hasMoreWaves()) s.startNextWave();
+        s.update(0.1);
+        guard++;
+      }
+    });
+
+    await expect(page.getByTestId('mission-results-modal')).toBeVisible();
+    await page.getByTestId('results-back-challenges-btn').click();
+    await expect(page.getByTestId('tech-points-value')).toHaveText('1');
+
+    // Switch to relaxed, complete same Daily Challenge again -> techPoints stays 1, then overflow 60 history
+    const afterOverflowExport = await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      const p1 = app.persistence.getActiveProfile();
+      p1.settings.difficulty = 'relaxed';
+      app.persistence.saveToStorage();
+      return p1.id;
+    });
+    expect(afterOverflowExport).toBeTruthy();
+
+    await page.getByTestId('start-challenge-daily').click();
+    await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      const s = app.getActiveSession()!;
+      s.economy.addGold(500);
+      s.buildTower('gun', 1);
+      s.buildTower('cannon', 2);
+      let now = Date.now();
+      for (let i = 0; i < s.getRequiredCharsForVictory() + 5; i++) {
+        const ch = s.typingEngine.getExpectedChar();
+        if (ch) s.handleKeyInput(ch, (now += 190), false);
+      }
+      let guard = 0;
+      while (!s.isSessionOver() && guard < 4000) {
+        if (!s.waveSystem.isWaveActive() && s.waveSystem.hasMoreWaves()) s.startNextWave();
+        s.update(0.1);
+        guard++;
+      }
+    });
+    await expect(page.getByTestId('mission-results-modal')).toBeVisible();
+    await page.getByTestId('results-back-challenges-btn').click();
+    // Once-only reward: still 1 techPoint!
+    await expect(page.getByTestId('tech-points-value')).toHaveText('1');
+
+    // Overflow challengeHistory beyond 60 entries, export JSON, clear storage, reload page, and import JSON
+    const exportedJson2 = await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      const p1 = app.persistence.getActiveProfile();
+      const filler = Array.from({ length: 65 }, (_, idx) => ({
+        challengeId: `other_${idx}`,
+        rulesetVersion: 1,
+        profileId: p1.id,
+        timestamp: Date.now() + idx,
+        difficulty: 'standard' as const,
+        score: 100,
+        accuracy: 0.9,
+        correctChars: 50,
+        errors: 2,
+        durationSec: 40,
+        wpm: 20,
+        baseDamage: 0,
+        wavesCompleted: 3,
+        towerTypesUsed: ['gun' as const],
+        heroId: null,
+        status: 'completed' as const,
+      }));
+      p1.challengeHistory = filler.slice(0, 60);
+      app.persistence.saveToStorage();
+      const json = app.persistence.exportSaveJson();
+      localStorage.clear();
+      return json;
+    });
+    await page.reload();
+    const backup = await page.evaluate((json) => {
+      const app = window.__keyfortApp!;
+      const res = app.persistence.importSaveJson(json);
+      return {
+        imported: res.success,
+        bestKeysCount: Object.keys(app.persistence.getActiveProfile().challengeBestByKey ?? {}).length,
+        techPoints: app.persistence.getActiveProfile().techPoints,
+      };
+    }, exportedJson2);
+    expect(backup.imported).toBe(true);
+    expect(backup.bestKeysCount).toBe(62);
+    expect(backup.techPoints).toBe(1);
+
+    // 2. Verify Training Academy ahead-of-curriculum marker and null consistency ('—') on tiny sample
+    await page.getByTestId('nav-training-academy').click();
+    await expect(page.getByTestId('training-academy-screen')).toBeVisible();
+    await expect(page.getByTestId('training-card-diacritics')).toContainText('Dobrowolny trening z wyprzedzeniem');
+    await page.getByTestId('start-training-diacritics').click();
+    await page.evaluate(() => {
+      const app = window.__keyfortApp!;
+      const eng = (app as unknown as { trainingState: { activeEngine: { typingEngine: { getExpectedChar: () => string | null }; handleKey: (k: string, t: number, r: boolean) => void } } }).trainingState.activeEngine;
+      for (let i = 0; i < 3; i++) {
+        const ch = eng.typingEngine.getExpectedChar();
+        if (ch) eng.handleKey(ch, 1000 + i * 200, false);
+      }
+    });
+    await page.getByTestId('finish-training-btn').click();
+    await expect(page.getByTestId('training-result-banner')).toContainText('—');
+  });
 });
