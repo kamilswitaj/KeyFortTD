@@ -35,15 +35,16 @@ Open the local URL displayed by Vite (typically `http://localhost:5173`) in any 
     - **Powered (`100%` efficiency)** when Energy > `0`.
     - **Combat Overcharge (`140%` efficiency)** when Energy >= `72%` of capacity or during a `20+` typing combo streak.
   - **Tactical Active Abilities**: Spend energy on **EMP Pulse** (shatters shields, reveals Ghosts, stuns), **Combat Overdrive**, or **Orbital Strike**.
-- **6 Distinct Towers with 3 Specialization Branches × 3 Tiers Each (54 Upgrades)**:
+- **10 Distinct Towers with 3 Specialization Branches × 3 Tiers Each (90 Upgrades)**:
   1. **Gun Tower (`Wieża Strzelecka`)**: Rapid kinetic defense with Armor-Piercing Rounds, Vulcan Rotary Overdrive, and Spectral Ricochet Bolts.
   2. **Cannon Tower (`Wieża Artyleryjska`)**: AoE siege mortar with Seismic Stun, Artillery Barrage, and Napalm / Cluster Munitions.
   3. **Frost Tower (`Wieża Mrozu`)**: Cryo crowd control with Brittle Fracture (+40% damage taken), Blizzard Field, and Cryo Containment (suppresses Splitter fragmentation & regeneration).
   4. **Tesla Tower (`Wieża Tesli`)**: Chain lightning hitting up to 9 targets, melting Shields (up to 3x bonus damage), and refunding energy via Quantum Conduit.
   5. **Sniper Tower (`Wieża Snajperska`)**: Long-range railgun with 100% armor penetration, Spotter Network target marking, and Orbital Laser Designator triggered on completed typing sequences.
   6. **Energy Reactor (`Reaktor Energii`)**: Tactical support nexus granting damage auras, passive gold/energy generation, keystroke energy multipliers, and map-wide Discharge Supernova shockwaves on every completed word/sequence.
-- **8 Diverse Enemy Archetypes & 8 Multi-Phase World Bosses**:
-  - **Scout**, **Siege Tank**, **Shield Bearer**, **Swarm Drone**, **Ghost Infiltrator**, **Core Splitter**, **Bio-Regenerator**, and **Multi-Phase Boss Dreadnoughts**.
+  7. **Flame Tower (`Wieża Ognia`)**, **Drone Hangar (`Hangar Dronów`)**, **Command Tower (`Wieża Dowodzenia`)**, and **Laser Tower (`Wieża Laserowa`)**: V2 tactical specialists forming 5 deterministic tower synergies (`SynergySystem`).
+- **12 Diverse Enemy Archetypes & 8 Multi-Phase World Bosses**:
+  - **Scout**, **Siege Tank**, **Shield Bearer**, **Swarm Drone**, **Ghost Infiltrator**, **Core Splitter**, **Bio-Regenerator**, **Armored Elite**, **Evasive Skirmisher**, **Flying Hover Striker**, **Support**, **Field Catalyst**, and **8 Multi-Phase Boss Dreadnoughts**.
 - **Complete 8-World, 48-Mission Educational Curriculum**:
   - Strictly incremental introduction of keys on the **Polish Programmer QWERTY** layout (`F, J, D, K` -> full Home Row -> Upper Row -> Lower Row -> Consolidation -> Polish Diacritics `ą, ć, ę, ł, ń, ó, ś, ź, ż` with `AltGr` -> Uppercase `Shift`, Numbers `0-9` & Punctuation -> Full Sentences).
   - Zero unlearned characters ever leak into generated exercises.
@@ -51,8 +52,10 @@ Open the local URL displayed by Vite (typically `http://localhost:5173`) in any 
 - **Deterministic Adaptive Learning & Mastery Engine**:
   - Tracks per-character and per-bigram attempts, accuracy, reaction time EMA, confusion matrix, and spaced repetition intervals.
   - Enforces minimum attempt volume (`>= 20` attempts), accuracy (`>= 90%`), and reaction speed before classifying a key as `Mastered`.
-- **Three Playable Game Modes**:
-  - **Campaign** (48 missions across 8 themed worlds)
+- **Playable Game Modes & Training**:
+  - **Campaign** (48 missions across 8 themed worlds on an interactive world map)
+  - **Daily & Weekly Challenges** (curriculum-tiered deterministic challenges: `precision`, `no_leak`, `limited_gold`, `two_towers`, `boss_rush`, with 5-branch Technology Specializations)
+  - **Training Academy & Standardized Typing Tests** (weak-key drills, bigrams, voluntary ahead-of-curriculum Polish diacritics/Shift drills, and fair 30s/60s/120s/Untimed family tests)
   - **Survival** (Endless waves with personal best tracking using unlocked keys)
   - **Tactical Sandbox** (Configurable unlimited gold/energy, all towers & Tier 3 upgrades, enemy spawner, adjustable game speed)
 - **Learning Analytics Dashboard & Multi-Profile Persistence**:
@@ -84,7 +87,8 @@ Production UI smoke test: after `npm run build`, set `E2E_PROD=1` and run `npm r
 - **12 Enemy Archetypes & 8 World Bosses**: Added Armored Elite, Evasive Skirmisher, Flying Hover Striker (anti-air targeting rules), and Field Catalyst alongside multi-phase world bosses.
 - **Training Academy & Standardized Typing Tests (`src/systems/TrainingAcademyEngine.ts`)**: Dedicated drills (weak keys, bigrams, Polish diacritics, Shift uppercase, themed words, sentences, relaxed practice) and fair 30s/60s/120s/Untimed family standardized tests.
 - **Interactive 8-World Map & Daily/Weekly Challenges (`src/systems/ChallengeEngine.ts`)**: Connected SVG campaign world map with light narrative, deterministic curriculum-tiered challenges, and 5-branch Technology Specializations.
-- **Save Schema V4 (`src/services/PersistenceService.ts`)**: Deterministic migration preserving V0–V3 saves, storage conflict detection, and interrupted-session protection.
-
-### V2 review notes
-Challenge and technology screens are previews until their gameplay rules and rewards are integrated. They cannot launch a normal campaign mission or spend points on nonfunctional upgrades. Timed standardized assessment records require the full duration and at least 20 correct characters, with WPM measured over the entire test; unfinished sessions retain educational practice without a competitive record. Older assessment records remain stored but are not ranked under the corrected rules.
+- **Save Schema V5 (`src/services/PersistenceService.ts`)**: Deterministic migration preserving V0–V4 saves, bounded per-difficulty challenge records (`challengeBestByKey` max 240, `completedChallenges` max 240, `awardedChallengeIds` max 400 + `awardedChallengeCutoffDate`), storage conflict detection, and interrupted-session protection.
+- **V2.3 Reliability & Educational Correctness**:
+  - Challenge tier eligibility (`ChallengeEngine.getPlayerEligibleTier`) and Training Academy key selection derive from **actually introduced keys** from completed missions, never leaking unlearned characters on partial or imported profiles.
+  - Voluntary ahead-of-curriculum drills (`diacritics`, `uppercase`) are explicitly labeled and never unlock campaign progression.
+  - Rhythm consistency returns `null` (rendered as `—`) on small samples (`< 8` valid keystroke intervals), and timed standardized tests invalidate qualification on window focus loss (`blur`/`visibilitychange`), reload, or early abort.
