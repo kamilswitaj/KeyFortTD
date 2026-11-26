@@ -463,26 +463,51 @@ export class ChallengeEngine {
     return { awardedTechPoints };
   }
 
+  /**
+   * With a difficulty filter, select each player's best result from recorded
+   * completions of that exact ruleset/difficulty. The summary is best-overall,
+   * so using it alone would mix relaxed and tactical results in one ranking.
+   * Retained history is bounded; a matching best-overall summary is a safe fallback.
+   */
   public static getChallengeLeaderboard(
     allProfiles: PlayerProfile[],
     challengeId: string,
-    rulesetVersion: number = CHALLENGE_RULESET_VERSION
+    rulesetVersion: number = CHALLENGE_RULESET_VERSION,
+    difficulty?: DifficultyLevel
   ): ChallengeLeaderboardEntry[] {
     const entries: ChallengeLeaderboardEntry[] = [];
     for (const p of allProfiles) {
-      const rec = p.completedChallenges?.[challengeId];
-      if (!rec) continue;
-      if ((rec.rulesetVersion ?? 1) !== rulesetVersion) continue;
-      entries.push({
-        profileId: p.id,
-        playerName: p.name,
-        avatarIcon: p.avatarIcon,
-        score: rec.score,
-        accuracy: rec.accuracy,
-        wpm: rec.wpm ?? 0,
-        difficulty: rec.difficulty ?? 'standard',
-        timestamp: rec.timestamp,
-      });
+      let best: ChallengeLeaderboardEntry | null = null;
+      const consider = (score: number, accuracy: number, wpm: number, level: DifficultyLevel, timestamp: number): void => {
+        if (difficulty && level !== difficulty) return;
+        const candidate: ChallengeLeaderboardEntry = {
+          profileId: p.id,
+          playerName: p.name,
+          avatarIcon: p.avatarIcon,
+          score,
+          accuracy,
+          wpm,
+          difficulty: level,
+          timestamp,
+        };
+        if (!best || candidate.score > best.score || (candidate.score === best.score && candidate.accuracy > best.accuracy)) {
+          best = candidate;
+        }
+      };
+
+      const summary = p.completedChallenges?.[challengeId];
+      if (summary && (summary.rulesetVersion ?? 1) === rulesetVersion) {
+        consider(summary.score, summary.accuracy, summary.wpm ?? 0, summary.difficulty ?? 'standard', summary.timestamp);
+      }
+      // Keep the original unfiltered API behavior for existing consumers.
+      if (difficulty) {
+        for (const record of p.challengeHistory ?? []) {
+          if (record.challengeId !== challengeId || record.rulesetVersion !== rulesetVersion ||
+              record.difficulty !== difficulty || record.status !== 'completed') continue;
+          consider(record.score, record.accuracy, record.wpm, record.difficulty, record.timestamp);
+        }
+      }
+      if (best) entries.push(best);
     }
     return entries.sort((a, b) => b.score - a.score || b.accuracy - a.accuracy);
   }

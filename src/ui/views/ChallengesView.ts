@@ -26,6 +26,12 @@ export class ChallengesView {
     const daily = ChallengeEngine.getDailyChallenge(activeTier);
     const weekly = ChallengeEngine.getWeeklyChallenge(activeTier);
     const completedMap = profile.completedChallenges ?? {};
+    const difficulty = profile.settings.difficulty;
+    const difficultyLabel = {
+      relaxed: i18n.pick('Spokojny', 'Relaxed'),
+      standard: i18n.pick('Standardowy', 'Standard'),
+      tactical: i18n.pick('Taktyczny', 'Tactical'),
+    }[difficulty];
     const unlockedTechs = profile.unlockedTechs ?? [];
     const techPoints = profile.techPoints ?? 0;
     const unlockedHeroes = profile.unlockedHeroes ?? [];
@@ -52,11 +58,12 @@ export class ChallengesView {
 
     const renderChallengeCard = (ch: typeof daily) => {
       const done = completedMap[ch.id];
-      const board = ChallengeEngine.getChallengeLeaderboard(allProfiles, ch.id, CHALLENGE_RULESET_VERSION).slice(0, 5);
+      const board = ChallengeEngine.getChallengeLeaderboard(allProfiles, ch.id, CHALLENGE_RULESET_VERSION, difficulty).slice(0, 5);
+      const personal = ChallengeEngine.getChallengeLeaderboard([profile], ch.id, CHALLENGE_RULESET_VERSION, difficulty)[0];
       const boardHtml =
         board.length > 0
           ? `<div style="margin-top:0.55rem; background:#090d16; padding:0.45rem 0.6rem; border-radius:6px; font-size:0.74rem;" data-testid="challenge-leaderboard-${ch.frequency}">
-              <div style="color:#94a3b8; font-weight:700; margin-bottom:0.25rem;">🏆 ${i18n.pick('Ranking Rodzinny Wyzwania:', 'Family Challenge Leaderboard:')}</div>
+              <div style="color:#94a3b8; font-weight:700; margin-bottom:0.25rem;">🏆 ${i18n.pick('Ranking wyzwania', 'Challenge leaderboard')} — ${escapeHtml(difficultyLabel)}</div>
               ${board
                 .map(
                   (e, idx) => `<div style="display:flex; justify-content:space-between; padding:0.12rem 0;">
@@ -85,8 +92,10 @@ export class ChallengesView {
               <span>⚡ +${ch.techPointReward} ${i18n.pick('Pkt Tech (1. raz)', 'Tech Pt (1st clear)')}</span>
             </div>
             ${
-              done
-                ? `<div style="color:#4ade80; font-size:0.8rem; font-weight:700; margin-top:0.4rem;">✓ ${i18n.pick('Twój rekord:', 'Your Best:')} ${done.score} pkt (${Math.round(done.accuracy * 100)}%)</div>`
+              personal
+                ? `<div style="color:#4ade80; font-size:0.8rem; font-weight:700; margin-top:0.4rem;">✓ ${i18n.pick('Twój rekord:', 'Your Best:')} ${personal.score} pkt (${Math.round(personal.accuracy * 100)}%) — ${escapeHtml(difficultyLabel)}</div>`
+                : done
+                ? `<div style="color:#94a3b8; font-size:0.8rem; margin-top:0.4rem;">${i18n.pick('Ukończone na innym poziomie trudności', 'Completed on a different difficulty')}</div>`
                 : ''
             }
             ${boardHtml}
@@ -98,7 +107,7 @@ export class ChallengesView {
             data-challenge-tier="${ch.tier}"
             data-testid="start-challenge-${ch.frequency}"
           >
-            ▶ ${done ? i18n.pick('Popraw rekord wyzwania', 'Replay Challenge') : i18n.pick('Rozpocznij wyzwanie', 'Launch Challenge')}
+            ▶ ${personal ? i18n.pick('Popraw rekord wyzwania', 'Replay Challenge') : i18n.pick('Rozpocznij wyzwanie', 'Launch Challenge')}
           </button>
         </div>
       `;
