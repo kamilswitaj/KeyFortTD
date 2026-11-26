@@ -514,13 +514,16 @@ export class AppController {
             status: evalRes.passed ? 'completed' : 'failed',
           }
         );
+        const xpEarned = evalRes.passed ? 120 + awardedTechPoints * 50 : 30;
+        const oldLevel = ownerProfile.level;
+        ProgressionEngine.awardXp(ownerProfile, xpEarned);
         this.lastOutcome = {
           victory: evalRes.passed,
           tacticalVictory: session.getLives() > 0,
           educationalCompleted: evalRes.passed,
           stars: evalRes.passed ? 3 : 0,
-          xpEarned: evalRes.passed ? 120 + awardedTechPoints * 50 : 30,
-          leveledUp: false,
+          xpEarned,
+          leveledUp: ownerProfile.level > oldLevel,
           newLevel: ownerProfile.level,
           newlyUnlockedTowers: [],
           keyObjectives: [],
@@ -528,7 +531,6 @@ export class AppController {
           reasonPl: evalRes.reasonPl,
           reasonEn: evalRes.reasonEn,
         };
-        ProgressionEngine.awardXp(ownerProfile, this.lastOutcome.xpEarned);
       } else if (session.mode === 'survival') {
         status = 'defeat';
         const waveReached = session.waveSystem.getCompletedWavesCount();
@@ -792,8 +794,12 @@ export class AppController {
     });
     window.addEventListener('blur', () => {
       const training = this.trainingState.activeEngine;
-      if (training?.mode === 'assessment' && training.started) this.finishTrainingOrAssessment(true);
-      else training?.typingEngine.markIdleBreak();
+      if (training?.mode === 'assessment' && training.started) {
+        training.markFocusLost();
+        this.finishTrainingOrAssessment(true);
+      } else {
+        training?.typingEngine.markIdleBreak();
+      }
       if (this.activeSession) {
         this.activeSession.typingEngine.markIdleBreak();
         // Auto-pause active wave combat when window loses focus so the player is not penalized
@@ -809,8 +815,12 @@ export class AppController {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
         const training = this.trainingState.activeEngine;
-        if (training?.mode === 'assessment' && training.started) this.finishTrainingOrAssessment(true);
-        else training?.typingEngine.markIdleBreak();
+        if (training?.mode === 'assessment' && training.started) {
+          training.markFocusLost();
+          this.finishTrainingOrAssessment(true);
+        } else {
+          training?.typingEngine.markIdleBreak();
+        }
         if (this.activeSession) {
           this.activeSession.typingEngine.markIdleBreak();
           if (this.activeSession.waveSystem.isWaveActive() && !this.activeSession.isSessionOver()) {

@@ -1,7 +1,8 @@
 import { MISSIONS_DATA } from '../data/curriculumData';
 import { Language, PlayerProfile, SessionHistoryEntry, TypingPromptItem } from '../types';
-import { StatisticsEngine } from './StatisticsEngine';
 import { AdaptiveLearningEngine } from './AdaptiveLearningEngine';
+import { ChallengeEngine } from './ChallengeEngine';
+import { StatisticsEngine } from './StatisticsEngine';
 import { TypingEngine } from './TypingEngine';
 
 export type TrainingActivityKind =
@@ -204,16 +205,16 @@ export class TrainingAcademyEngine {
         : MISSIONS_DATA[MISSIONS_DATA.length - 1].allowedKeys;
     }
 
-    // In Training Academy, use only keys introduced in the player's unlocked campaign progress (plus explicit diacritics/uppercase if chosen)
-    const completedCount = Object.values(this.profile.completedMissions).filter((m) => m.completed).length;
-    const unlockedMission = MISSIONS_DATA[Math.min(MISSIONS_DATA.length - 1, completedCount)] ?? MISSIONS_DATA[0];
+    // In Training Academy, use only keys actually introduced in completed campaign missions
+    // (plus explicit diacritics/uppercase only when user voluntarily chooses ahead-of-curriculum drills)
+    const introduced = Array.from(ChallengeEngine.getIntroducedKeysForPlayer(this.profile));
     if (this.activityKind === 'diacritics') {
-      return Array.from(new Set([...unlockedMission.allowedKeys, 'ą', 'ć', 'ę', 'ł', 'ń', 'ó', 'ś', 'ź', 'ż', ' ']));
+      return Array.from(new Set([...introduced, 'ą', 'ć', 'ę', 'ł', 'ń', 'ó', 'ś', 'ź', 'ż', ' ']));
     }
     if (this.activityKind === 'uppercase') {
-      return Array.from(new Set([...unlockedMission.allowedKeys, 'A', 'S', 'D', 'F', 'J', 'K', 'L', ' ']));
+      return Array.from(new Set([...introduced, 'A', 'S', 'D', 'F', 'J', 'K', 'L', ' ']));
     }
-    return unlockedMission.allowedKeys;
+    return introduced;
   }
 
   private buildInitialPrompts(allowedKeys: string[]): TypingPromptItem[] {

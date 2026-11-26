@@ -168,11 +168,38 @@ export class ChallengeEngine {
     return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
   }
 
+  public static getIntroducedKeysForPlayer(profile: PlayerProfile): Set<string> {
+    const keys = new Set<string>(MISSIONS_DATA[0]?.allowedKeys ?? ['f', 'j', ' ']);
+    for (const mission of MISSIONS_DATA) {
+      if (profile.completedMissions?.[mission.id]?.completed) {
+        for (const k of mission.allowedKeys) {
+          keys.add(k);
+        }
+      }
+    }
+    return keys;
+  }
+
+  private static hasAllKeys(required: string[], introduced: Set<string>): boolean {
+    return required.every((k) => introduced.has(k));
+  }
+
   public static getPlayerEligibleTier(profile: PlayerProfile): ChallengeTier {
-    const completed = Object.values(profile.completedMissions).filter((m) => m.completed).length;
-    if (completed >= 36) return 'full';
-    if (completed >= 18) return 'intermediate';
-    if (completed >= 6) return 'beginner';
+    const completed = Object.values(profile.completedMissions ?? {}).filter((m) => m.completed).length;
+    const introduced = ChallengeEngine.getIntroducedKeysForPlayer(profile);
+    const w8End = MISSIONS_DATA.find((m) => m.id === 'w8_m6');
+    const w5End = MISSIONS_DATA.find((m) => m.id === 'w5_m6');
+    const w2End = MISSIONS_DATA.find((m) => m.id === 'w2_m6');
+
+    if (completed >= 36 && w8End && ChallengeEngine.hasAllKeys(w8End.allowedKeys, introduced)) {
+      return 'full';
+    }
+    if (completed >= 18 && w5End && ChallengeEngine.hasAllKeys(w5End.allowedKeys, introduced)) {
+      return 'intermediate';
+    }
+    if (completed >= 10 && w2End && ChallengeEngine.hasAllKeys(w2End.allowedKeys, introduced)) {
+      return 'beginner';
+    }
     return 'home_anchors';
   }
 

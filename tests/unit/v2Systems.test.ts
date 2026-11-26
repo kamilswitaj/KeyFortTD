@@ -468,4 +468,65 @@ describe('V2.0 Systems, Content Validation, Heroes, Synergies, Challenges & Trai
     expect(reloadedP1.standardizedTestRecords?.length).toBe(1);
     expect(reloadedP1.standardizedTestRecords?.[0].wpm).toBe(validRes.wpm);
   });
+
+  it('determines challenge tier eligibility from actual introduced keys and mission progress, never exposing unknown characters on partial/imported profiles', () => {
+    const fresh = PersistenceService.createDefaultProfile('p_fresh', 'Nowy');
+    expect(ChallengeEngine.getPlayerEligibleTier(fresh)).toBe('home_anchors');
+
+    // After 3 missions (w1_m1..w1_m3): still home_anchors
+    const after3 = PersistenceService.createDefaultProfile('p_3', 'Po3');
+    for (const id of ['w1_m1', 'w1_m2', 'w1_m3']) {
+      after3.completedMissions[id] = {
+        missionId: id, completed: true, stars: 3, bestAccuracy: 0.95, bestWpm: 20, bestScore: 1000, timesCompleted: 1,
+      };
+    }
+    expect(ChallengeEngine.getPlayerEligibleTier(after3)).toBe('home_anchors');
+
+    // After 6 missions of World 1 only (w1_m1..w1_m6): does NOT know World 2 keys yet -> still home_anchors!
+    const afterW1 = PersistenceService.createDefaultProfile('p_w1', 'PoW1');
+    for (let i = 1; i <= 6; i++) {
+      const id = `w1_m${i}`;
+      afterW1.completedMissions[id] = {
+        missionId: id, completed: true, stars: 3, bestAccuracy: 0.95, bestWpm: 20, bestScore: 1000, timesCompleted: 1,
+      };
+    }
+    expect(ChallengeEngine.getPlayerEligibleTier(afterW1)).toBe('home_anchors');
+
+    // Non-sequential/imported profile with 10 missions that lacks World 2 keys (e.g. w1 + 4 random w1/w2 without w2_m5/m6)
+    const partial = PersistenceService.createDefaultProfile('p_partial', 'Czesciowy');
+    for (let i = 1; i <= 6; i++) {
+      partial.completedMissions[`w1_m${i}`] = {
+        missionId: `w1_m${i}`, completed: true, stars: 2, bestAccuracy: 0.9, bestWpm: 20, bestScore: 800, timesCompleted: 1,
+      };
+    }
+    for (let i = 1; i <= 3; i++) {
+      partial.completedMissions[`w2_m${i}`] = {
+        missionId: `w2_m${i}`, completed: true, stars: 2, bestAccuracy: 0.9, bestWpm: 20, bestScore: 800, timesCompleted: 1,
+      };
+    }
+    expect(ChallengeEngine.getPlayerEligibleTier(partial)).toBe('home_anchors');
+
+    // Completing World 1 + World 2 (12 missions, all World 2 keys introduced) unlocks beginner
+    for (let i = 4; i <= 6; i++) {
+      partial.completedMissions[`w2_m${i}`] = {
+        missionId: `w2_m${i}`, completed: true, stars: 3, bestAccuracy: 0.95, bestWpm: 25, bestScore: 1000, timesCompleted: 1,
+      };
+    }
+    expect(ChallengeEngine.getPlayerEligibleTier(partial)).toBe('beginner');
+
+    // Voluntary ahead-of-curriculum drill (diacritics/uppercase) never unlocks campaign keys or challenge tiers
+    const aheadEngine = new TrainingAcademyEngine({
+      profile: after3,
+      mode: 'training',
+      activityKind: 'diacritics',
+      language: 'pl',
+    });
+    for (let i = 0; i < 12; i++) {
+      const ch = aheadEngine.typingEngine.getExpectedChar();
+      if (ch) aheadEngine.handleKey(ch, 5000 + i * 180, false);
+    }
+    aheadEngine.finishAndRecord(false);
+    expect(ChallengeEngine.getPlayerEligibleTier(after3)).toBe('home_anchors');
+    expect(ChallengeEngine.getIntroducedKeysForPlayer(after3).has('ą')).toBe(false);
+  });
 });

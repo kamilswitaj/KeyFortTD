@@ -23,6 +23,7 @@ export interface TrainingViewState {
     errors: number;
     consistency: number | null;
     qualified: boolean;
+    focusLostInvalidated?: boolean;
   } | null;
 }
 
@@ -40,7 +41,7 @@ export class TrainingAcademyView {
     const resultBannerHtml = state.lastResult
       ? `<div class="sidebar-panel" style="border-color:#22c55e; background:rgba(22,163,74,0.12);" data-testid="training-result-banner">
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
-            <strong style="color:#4ade80;">✓ ${state.lastResult.qualified ? i18n.pick('Wynik zakwalifikowany do rankingu', 'Qualifying test result') : i18n.pick('Zapisano ćwiczenie (bez rekordu testu)', 'Practice saved (no test record)')}</strong>
+            <strong style="color:${state.lastResult.focusLostInvalidated ? '#f59e0b' : '#4ade80'};">${state.lastResult.focusLostInvalidated ? '⚠️ ' + i18n.pick('Test przerwany (utrata fokusu okna — wynik niezakwalifikowany)', 'Test interrupted (window focus lost — not qualified)') : '✓ ' + (state.lastResult.qualified ? i18n.pick('Wynik zakwalifikowany do rankingu', 'Qualifying test result') : i18n.pick('Zapisano ćwiczenie (bez rekordu testu)', 'Practice saved (no test record)'))}</strong>
             <div style="display:flex; gap:1rem; font-size:0.85rem;">
               <span>⚡ <strong>${state.lastResult.wpm} WPM</strong></span>
               <span>🎯 <strong>${state.lastResult.correct + state.lastResult.errors > 0 ? `${Math.round(state.lastResult.accuracy * 100)}%` : '—'}</strong></span>
