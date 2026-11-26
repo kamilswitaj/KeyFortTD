@@ -1,12 +1,13 @@
 import { ACHIEVEMENTS_DATA, COSMETICS_DATA } from '../data/achievementsData';
 import { MISSIONS_DATA } from '../data/curriculumData';
 import { TOWER_ORDER } from '../data/towersData';
-import { TECH_TREE_DATA } from '../systems/ChallengeEngine';
+import { ChallengeEngine, MAX_CHALLENGE_BEST_RECORDS, TECH_TREE_DATA } from '../systems/ChallengeEngine';
 import { MasteryEngine } from '../systems/MasteryEngine';
 import { StatisticsEngine } from '../systems/StatisticsEngine';
 import {
   AppSettings,
   BigramStats,
+  ChallengeBestRecord,
   ChallengeCompletionRecord,
   CharacterStats,
   DailyPracticeAggregate,
@@ -25,7 +26,7 @@ import {
 } from '../types';
 
 export const STORAGE_KEY = 'keyfort_td_save_data';
-export const CURRENT_SAVE_VERSION = 4;
+export const CURRENT_SAVE_VERSION = 5;
 
 const VALID_TOWERS = new Set<TowerType>(TOWER_ORDER);
 const VALID_HEROES = new Set<HeroId>(['guardian', 'engineer', 'ranger', 'arcanist']);
@@ -745,7 +746,7 @@ export class PersistenceService {
             rulesetVersion: isFiniteNumber(cVal.rulesetVersion) ? Math.floor(cVal.rulesetVersion) : 1,
             difficulty: VALID_DIFFICULTY.has(cVal.difficulty as DifficultyLevel)
               ? (cVal.difficulty as DifficultyLevel)
-              : 'standard',
+              : undefined,
             wpm: isFiniteNumber(cVal.wpm) ? Math.floor(clampFinite(cVal.wpm, 0, 350, 0)) : 0,
             baseDamage: isFiniteNumber(cVal.baseDamage) ? Math.floor(clampFinite(cVal.baseDamage, 0, 1000, 0)) : 0,
             wavesCompleted: isFiniteNumber(cVal.wavesCompleted) ? Math.floor(clampFinite(cVal.wavesCompleted, 0, 1000, 0)) : 0,
@@ -788,6 +789,94 @@ export class PersistenceService {
         }
       }
     }
+
+    let challengeBestByKey: Record<string, ChallengeBestRecord> = {};
+    const upsertBest = (candidate: ChallengeBestRecord): void => {
+      const key = ChallengeEngine.getChallengeBestKey(
+        candidate.challengeId,
+        candidate.rulesetVersion,
+        candidate.difficulty
+      );
+      const prev = challengeBestByKey[key];
+      if (
+        !prev ||
+        candidate.score > prev.score ||
+        (candidate.score === prev.score && candidate.accuracy > prev.accuracy)
+      ) {
+        challengeBestByKey[key] = candidate;
+      }
+    };
+    if (isPlainObject(raw.challengeBestByKey)) {
+      for (const [bKey, bVal] of Object.entries(raw.challengeBestByKey)) {
+        if (RESERVED_OBJECT_KEYS.has(bKey) || !isPlainObject(bVal)) continue;
+        if (typeof bVal.challengeId !== 'string' || !VALID_DIFFICULTY.has(bVal.difficulty as DifficultyLevel)) continue;
+        upsertBest({
+          challengeId: bVal.challengeId.slice(0, 80),
+          rulesetVersion: isFiniteNumber(bVal.rulesetVersion) ? Math.floor(clampFinite(bVal.rulesetVersion, 1, 1000, 1)) : 1,
+          difficulty: bVal.difficulty as DifficultyLevel,
+          score: Math.floor(clampFinite(bVal.score, 0, 10000000, 0)),
+          accuracy: clampFinite(bVal.accuracy, 0, 1, 0),
+          wpm: Math.floor(clampFinite(bVal.wpm, 0, 350, 0)),
+          correctChars: Math.floor(clampFinite(bVal.correctChars, 0, 1000000, 0)),
+          baseDamage: Math.floor(clampFinite(bVal.baseDamage, 0, 1000, 0)),
+          wavesCompleted: Math.floor(clampFinite(bVal.wavesCompleted, 0, 1000, 0)),
+          towerTypesUsed: Array.isArray(bVal.towerTypesUsed)
+            ? bVal.towerTypesUsed.filter((t): t is TowerType => typeof t === 'string' && VALID_TOWERS.has(t as TowerType))
+            : [],
+          timestamp: Math.floor(clampFinite(bVal.timestamp, 0, Number.MAX_SAFE_INTEGER, Date.now())),
+        });
+      }
+    }
+    // Migrate from legacy summaries ONLY when difficulty was explicitly stored (never invent difficulty)
+    for (const [cId, summary] of Object.entries(completedChallenges)) {
+      if (!summary.difficulty) continue;
+      upsertBest({
+        challengeId: cId.slice(0, 80),
+        rulesetVersion: summary.rulesetVersion ?? 1,
+        difficulty: summary.difficulty,
+        score: summary.score,
+        accuracy: summary.accuracy,
+        wpm: summary.wpm ?? 0,
+        correctChars: 0,
+        baseDamage: summary.baseDamage ?? 0,
+        wavesCompleted: summary.wavesCompleted ?? 0,
+        towerTypesUsed: [...(summary.towerTypesUsed ?? [])],
+        timestamp: summary.timestamp,
+      });
+    }
+    // Also migrate any completed entries from retained history
+    for (const chRec of challengeHistory) {
+      if (chRec.status !== 'completed') continue;
+      upsertBest({
+        challengeId: chRec.challengeId,
+        rulesetVersion: chRec.rulesetVersion,
+        difficulty: chRec.difficulty,
+        score: chRec.score,
+        accuracy: chRec.accuracy,
+        wpm: chRec.wpm,
+        correctChars: chRec.correctChars,
+        baseDamage: chRec.baseDamage,
+        wavesCompleted: chRec.wavesCompleted,
+        towerTypesUsed: [...chRec.towerTypesUsed],
+        timestamp: chRec.timestamp,
+      });
+    }
+    challengeBestByKey = ChallengeEngine.pruneChallengeBestByKey(challengeBestByKey, MAX_CHALLENGE_BEST_RECORDS);
+
+    const awardedSet = new Set<string>(Object.keys(completedChallenges));
+    for (const best of Object.values(challengeBestByKey)) {
+      awardedSet.add(best.challengeId);
+    }
+    for (const chRec of challengeHistory) {
+      if (chRec.status === 'completed') awardedSet.add(chRec.challengeId);
+    }
+    if (Array.isArray(raw.awardedChallengeIds)) {
+      for (const id of raw.awardedChallengeIds) {
+        if (typeof id === 'string' && id.trim()) awardedSet.add(id.slice(0, 80));
+      }
+    }
+    const awardedChallengeIds = Array.from(awardedSet);
+
     const standardizedTestRecords: NonNullable<PlayerProfile['standardizedTestRecords']> = [];
     if (Array.isArray(raw.standardizedTestRecords)) {
       for (const rec of raw.standardizedTestRecords.slice(0, 30)) {
@@ -800,7 +889,10 @@ export class PersistenceService {
             language: rec.language === 'en' ? 'en' : 'pl',
             wpm: Math.floor(clampFinite(rec.wpm, 0, 350, 0)),
             accuracy: clampFinite(rec.accuracy, 0, 1, 0),
-            consistency: Math.floor(clampFinite(rec.consistency, 0, 100, 0)),
+            consistency:
+              rec.consistency === null || rec.consistency === undefined
+                ? null
+                : Math.floor(clampFinite(rec.consistency, 0, 100, 0)),
             timestamp: Math.floor(clampFinite(rec.timestamp, 0, Number.MAX_SAFE_INTEGER, Date.now())),
           });
         }
@@ -839,6 +931,8 @@ export class PersistenceService {
       techPoints,
       unlockedTechs,
       completedChallenges,
+      challengeBestByKey,
+      awardedChallengeIds,
       challengeHistory,
       standardizedTestRecords,
       skillAssessmentDone: Boolean(raw.skillAssessmentDone),

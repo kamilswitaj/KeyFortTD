@@ -271,19 +271,36 @@ describe('V2.0 Systems, Content Validation, Heroes, Synergies, Challenges & Trai
       wpm: 16, baseDamage: 0, wavesCompleted: 3, towerTypesUsed: ['gun'] as const,
       heroId: null, status: 'completed' as const
     });
-    ChallengeEngine.recordChallengeCompletion(a, standard, {...result('a', 'standard', 400), towerTypesUsed: ['gun']});
-    ChallengeEngine.recordChallengeCompletion(a, relaxed, {...result('a', 'relaxed', 1500), towerTypesUsed: ['gun']});
+    const r1 = ChallengeEngine.recordChallengeCompletion(a, standard, {...result('a', 'standard', 400), towerTypesUsed: ['gun']});
+    const r2 = ChallengeEngine.recordChallengeCompletion(a, relaxed, {...result('a', 'relaxed', 1500), towerTypesUsed: ['gun']});
+    expect(r1.awardedTechPoints).toBe(standard.techPointReward);
+    expect(r2.awardedTechPoints).toBe(0);
     ChallengeEngine.recordChallengeCompletion(b, standard, {...result('b', 'standard', 600), towerTypesUsed: ['gun']});
     expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion,'standard')
       .map(x => [x.profileId,x.score,x.difficulty])).toEqual([['b',600,'standard'],['a',400,'standard']]);
     expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion,'relaxed')
       .map(x => [x.profileId,x.score])).toEqual([['a',1500]]);
+    // Even after challengeHistory overflows 60 entries / is cleared, per-difficulty bests persist!
     a.challengeHistory = [];
     expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion,'relaxed')
       .map(x => [x.profileId,x.score])).toEqual([['a',1500]]);
     expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion,'standard')
-      .map(x => x.profileId)).toEqual(['b']);
+      .map(x => [x.profileId, x.score])).toEqual([['b', 600], ['a', 400]]);
     expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion+1,'standard')).toEqual([]);
+
+    // Verify bounded retention (max 240 keys in challengeBestByKey)
+    const many: Record<string, any> = {};
+    for (let i = 0; i < 260; i++) {
+      many[`c_${i}::v1::standard`] = {
+        challengeId: `c_${i}`, rulesetVersion: 1, difficulty: 'standard', score: 100,
+        accuracy: 0.9, wpm: 20, correctChars: 50, baseDamage: 0, wavesCompleted: 1,
+        towerTypesUsed: ['gun'], timestamp: 1000 + i
+      };
+    }
+    const pruned = ChallengeEngine.pruneChallengeBestByKey(many);
+    expect(Object.keys(pruned).length).toBe(240);
+    expect(pruned['c_259::v1::standard']).toBeDefined();
+    expect(pruned['c_0::v1::standard']).toBeUndefined();
   });
 
   it('applies all 5 TechnologySystem modifiers, validates purchases, and applies Guardian aura & explicitNoHero', () => {

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MISSIONS_DATA } from '../../src/data/curriculumData';
-import { PersistenceService } from '../../src/services/PersistenceService';
+import { CURRENT_SAVE_VERSION, PersistenceService, STORAGE_KEY } from '../../src/services/PersistenceService';
 import { AchievementSystem } from '../../src/systems/AchievementSystem';
+import { ChallengeEngine } from '../../src/systems/ChallengeEngine';
 import { GameSessionEngine } from '../../src/systems/GameSessionEngine';
 import { ProgressionEngine } from '../../src/systems/ProgressionEngine';
 import { StatisticsEngine } from '../../src/systems/StatisticsEngine';
@@ -66,7 +67,7 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     };
 
     const migrated = PersistenceService.migrateAndValidateSaveData(legacyV0);
-    expect(migrated.version).toBe(4);
+    expect(migrated.version).toBe(CURRENT_SAVE_VERSION);
     const active = migrated.profiles[migrated.activeProfileId];
     expect(active.name).toBe('Kamil_Legacy');
     expect(active.level).toBe(4);
@@ -145,7 +146,7 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     };
 
     const migrated = PersistenceService.migrateAndValidateSaveData(v2Save);
-    expect(migrated.version).toBe(4);
+    expect(migrated.version).toBe(CURRENT_SAVE_VERSION);
     const prof = migrated.profiles.profile_default;
     expect(prof.level).toBe(5);
     expect(prof.completedMissions.w1_m1.completed).toBe(true);
@@ -522,5 +523,125 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     expect(session.isEducationalCompleted()).toBe(true);
     expect(session.isVictory()).toBe(true);
     expect(session.isSessionOver()).toBe(true);
+  });
+
+  it('migrates v4 saves to v5 preserving achievements/XP/tech, populating challengeBestByKey without inventing missing difficulty, and preventing duplicate tech point rewards', () => {
+    const v4Save = {
+      version: 4,
+      activeProfileId: 'p1',
+      profiles: {
+        p1: {
+          id: 'p1',
+          name: 'Ada',
+          level: 6,
+          xp: 1200,
+          techPoints: 2,
+          unlockedTechs: ['tech_kinetic_1'],
+          achievements: ['first_defense'],
+          completedChallenges: {
+            daily_explicit: {
+              score: 900,
+              accuracy: 0.96,
+              timestamp: 1000,
+              rulesetVersion: 1,
+              difficulty: 'tactical',
+              wpm: 35,
+            },
+            daily_legacy_no_diff: {
+              score: 500,
+              accuracy: 0.9,
+              timestamp: 900,
+            },
+          },
+          challengeHistory: [
+            {
+              challengeId: 'daily_explicit',
+              rulesetVersion: 1,
+              profileId: 'p1',
+              timestamp: 950,
+              difficulty: 'relaxed',
+              score: 1100,
+              accuracy: 0.98,
+              correctChars: 120,
+              errors: 2,
+              durationSec: 60,
+              wpm: 40,
+              baseDamage: 0,
+              wavesCompleted: 3,
+              towerTypesUsed: ['gun'],
+              heroId: null,
+              status: 'completed',
+            },
+          ],
+        },
+      },
+    };
+
+    const migrated = PersistenceService.migrateAndValidateSaveData(v4Save);
+    expect(migrated.version).toBe(CURRENT_SAVE_VERSION);
+    const p1 = migrated.profiles.p1;
+    expect(p1.level).toBe(6);
+    expect(p1.xp).toBe(1200);
+    expect(p1.techPoints).toBe(2);
+    expect(p1.unlockedTechs).toEqual(['tech_kinetic_1']);
+    expect(p1.achievements).toContain('first_defense');
+
+    // Legacy summary without difficulty must NOT invent 'standard'
+    expect(p1.completedChallenges?.daily_legacy_no_diff.difficulty).toBeUndefined();
+    expect(p1.challengeBestByKey?.['daily_legacy_no_diff::v1::standard']).toBeUndefined();
+
+    // Explicit summary and completed history populate per-difficulty records
+    expect(p1.challengeBestByKey?.['daily_explicit::v1::tactical']?.score).toBe(900);
+    expect(p1.challengeBestByKey?.['daily_explicit::v1::relaxed']?.score).toBe(1100);
+    expect(p1.awardedChallengeIds).toContain('daily_explicit');
+    expect(p1.awardedChallengeIds).toContain('daily_legacy_no_diff');
+
+    // Replaying an already-awarded challengeId on another difficulty awards 0 tech points
+    const challenge = ChallengeEngine.getDailyChallenge('home_anchors', new Date('2026-11-26T12:00:00Z'));
+    const cfgStandard = { ...ChallengeEngine.buildChallengeSessionConfig(challenge, 'standard'), challengeId: 'daily_explicit' };
+    const rewardRes = ChallengeEngine.recordChallengeCompletion(p1, cfgStandard, {
+      challengeId: 'daily_explicit',
+      rulesetVersion: 1,
+      profileId: 'p1',
+      timestamp: 2000,
+      difficulty: 'standard',
+      score: 750,
+      accuracy: 0.94,
+      correctChars: 80,
+      errors: 3,
+      durationSec: 60,
+      wpm: 25,
+      baseDamage: 0,
+      wavesCompleted: 3,
+      towerTypesUsed: ['gun'],
+      heroId: null,
+      status: 'completed',
+    });
+    expect(rewardRes.awardedTechPoints).toBe(0);
+    expect(p1.techPoints).toBe(2);
+  });
+
+  it('rejects invalid JSON imports with zero mutation of active save or localStorage', () => {
+    const svc = new PersistenceService();
+    const active = svc.getActiveProfile();
+    active.name = 'Bezpieczny';
+    active.xp = 420;
+    svc.flushSave();
+    const snapshotBefore = localStorage.getItem(STORAGE_KEY);
+
+    const badInputs = [
+      '{not-json',
+      JSON.stringify({ version: 999, activeProfileId: 'x', profiles: {} }),
+      JSON.stringify({ version: 5, activeProfileId: 'missing', profiles: {} }),
+      JSON.stringify({ version: 5, activeProfileId: '__proto__', profiles: { __proto__: { name: 'Bad' } } }),
+    ];
+
+    for (const bad of badInputs) {
+      const res = svc.importSaveJson(bad);
+      expect(res.success).toBe(false);
+      expect(svc.getActiveProfile().name).toBe('Bezpieczny');
+      expect(svc.getActiveProfile().xp).toBe(420);
+      expect(localStorage.getItem(STORAGE_KEY)).toBe(snapshotBefore);
+    }
   });
 });

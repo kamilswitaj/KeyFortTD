@@ -563,7 +563,22 @@ export interface AppSettings {
   showWpmStat: boolean;
 }
 
+export interface ChallengeBestRecord {
+  challengeId: string;
+  rulesetVersion: number;
+  difficulty: DifficultyLevel;
+  score: number;
+  accuracy: number;
+  wpm: number;
+  correctChars: number;
+  baseDamage: number;
+  wavesCompleted: number;
+  towerTypesUsed: TowerType[];
+  timestamp: number;
+}
+
 export interface ChallengeCompletionRecord {
+
   challengeId: string;
   rulesetVersion: number;
   profileId: string;
@@ -633,6 +648,8 @@ export interface PlayerProfile {
       towerTypesUsed?: TowerType[];
     }
   >;
+  challengeBestByKey?: Record<string, ChallengeBestRecord>;
+  awardedChallengeIds?: string[];
   challengeHistory?: ChallengeCompletionRecord[];
   standardizedTestRecords?: Array<{
     rulesVersion?: number;
@@ -641,7 +658,7 @@ export interface PlayerProfile {
     language: Language;
     wpm: number;
     accuracy: number;
-    consistency: number;
+    consistency: number | null;
     timestamp: number;
   }>;
   skillAssessmentDone?: boolean;
