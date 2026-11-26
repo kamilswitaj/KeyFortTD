@@ -4,6 +4,7 @@ import { TOWER_ORDER } from '../data/towersData';
 import { ChallengeEngine, MAX_CHALLENGE_BEST_RECORDS, TECH_TREE_DATA } from '../systems/ChallengeEngine';
 import { MasteryEngine } from '../systems/MasteryEngine';
 import { StatisticsEngine } from '../systems/StatisticsEngine';
+import { STANDARDIZED_RULES_VERSION } from '../systems/TrainingAcademyEngine';
 import {
   AppSettings,
   BigramStats,
@@ -883,7 +884,11 @@ export class PersistenceService {
         if (isPlainObject(rec)) {
           const dur = rec.durationSec === 30 || rec.durationSec === 60 || rec.durationSec === 120 ? rec.durationSec : 0;
           standardizedTestRecords.push({
-            rulesVersion: rec.rulesVersion === 1 ? 1 : undefined,
+            // Retain the current assessment ruleset across reloads and JSON imports.
+            rulesVersion:
+              rec.rulesVersion === 1 || rec.rulesVersion === STANDARDIZED_RULES_VERSION
+                ? rec.rulesVersion
+                : undefined,
             durationSec: dur,
             pool: rec.pool === 'full' ? 'full' : 'beginner',
             language: rec.language === 'en' ? 'en' : 'pl',

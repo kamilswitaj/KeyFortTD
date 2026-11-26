@@ -359,9 +359,12 @@ export class CampaignSimulator {
       if (persona.wpm === 0 && session.areAllWavesCleared()) break;
     }
 
-    const baseDamage = Math.max(0, session.getMaxLives() - session.getLives());
-    const wavesCompleted = session.waveSystem.getCurrentWaveNumber();
-    const towerTypesUsed = Array.from(new Set(session.getTowers().map((t) => t.type)));
+    // Use the same authoritative counters as the real challenge finalization.
+    // HP can be healed, an active wave is not a completed wave, and sold
+    // towers must still count toward "distinct tower types used".
+    const baseDamage = session.getCumulativeBaseDamage();
+    const wavesCompleted = session.waveSystem.getCompletedWavesCount();
+    const towerTypesUsed = session.getUsedTowerTypes();
     const accuracy = session.typingEngine.getAccuracy();
     const correctChars = session.typingEngine.getTotalCorrect();
     const wpm = session.typingEngine.getWpm();
