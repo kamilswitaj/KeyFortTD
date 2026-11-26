@@ -22,6 +22,7 @@ export interface TrainingActivityDefinition {
   descPl: string;
   descEn: string;
   icon: string;
+  isAheadOfCurriculum?: boolean;
 }
 
 export const TRAINING_ACTIVITIES: TrainingActivityDefinition[] = [
@@ -54,6 +55,7 @@ export const TRAINING_ACTIVITIES: TrainingActivityDefinition[] = [
     descPl: 'Ćwiczenia ą, ć, ę, ł, ń, ó, ś, ź, ż z prawym klawiszem Alt.',
     descEn: 'Practice Polish letters using Right Alt (AltGr) combinations.',
     icon: '🇵🇱',
+    isAheadOfCurriculum: true,
   },
   {
     id: 'uppercase',
@@ -64,6 +66,7 @@ export const TRAINING_ACTIVITIES: TrainingActivityDefinition[] = [
     descPl: 'Pewne używanie klawisza Shift w parach z literami obu rąk.',
     descEn: 'Master Shift key combinations across left and right hands.',
     icon: '⬆️',
+    isAheadOfCurriculum: true,
   },
   {
     id: 'words',
@@ -97,7 +100,7 @@ export const TRAINING_ACTIVITIES: TrainingActivityDefinition[] = [
   },
 ];
 
-const STANDARDIZED_POOLS: Record<'beginner' | 'full', Record<Language, string[]>> = {
+export const STANDARDIZED_POOLS: Record<'beginner' | 'full', Record<Language, string[]>> = {
   beginner: {
     pl: [
       'f j f j d k d k s l s l a j f k d l s a',
@@ -105,9 +108,9 @@ const STANDARDIZED_POOLS: Record<'beginner' | 'full', Record<Language, string[]>
       'ala da las ja daj skala fala dada',
       'kasa fala lada sala klasa skala daj',
       'hala gala skalf falka lada sala las',
-      'jak dla nas las dal fala skala laska',
+      'jak dla las dal fala skala laska',
       'sad lad glad fal kal hal gal das jas',
-      'falkon skala lada kasa sala hala fala',
+      'falka skala lada kasa sala hala fala',
     ],
     en: [
       'f j f j d k d k s l s l a j f k d l s a',
@@ -115,8 +118,8 @@ const STANDARDIZED_POOLS: Record<'beginner' | 'full', Record<Language, string[]>
       'dad had a salad lad asks a lass',
       'ask dad fall flask glad lad sad all',
       'half glad hall fall glass dash flash',
-      'jaguar lag hag ash sash lash gash',
-      'sad lad had a glass flask as a gift',
+      'jags lag hag ash sash lash gash',
+      'sad lad had a glass flask as a lass',
       'all lads ask dad as flags fall',
     ],
   },
@@ -150,7 +153,7 @@ export interface AcademyResult {
   accuracy: number;
   correct: number;
   errors: number;
-  consistency: number;
+  consistency: number | null;
   qualified: boolean;
   focusLostInvalidated?: boolean;
 }
@@ -316,15 +319,14 @@ export class TrainingAcademyEngine {
       : this.typingEngine.getWpm();
 
     // True timing-based rhythm consistency from coefficient of variation of active keystroke intervals
-    let consistency = 100;
-    if (this.keyIntervalsMs.length >= 4) {
+    // Require at least 8 intervals so tiny samples return null (rendered as '—') instead of fake 100%.
+    let consistency: number | null = null;
+    if (this.keyIntervalsMs.length >= 8) {
       const mean = this.keyIntervalsMs.reduce((s, v) => s + v, 0) / this.keyIntervalsMs.length;
       const variance =
         this.keyIntervalsMs.reduce((s, v) => s + (v - mean) ** 2, 0) / this.keyIntervalsMs.length;
       const cv = mean > 0 ? Math.sqrt(variance) / mean : 0;
       consistency = Math.max(0, Math.min(100, Math.round(100 - cv * 65)));
-    } else if (correct + errors === 0) {
-      consistency = 0;
     }
 
     this.finalizedResult = {

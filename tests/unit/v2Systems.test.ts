@@ -16,7 +16,7 @@ import { ResourceEconomy } from '../../src/systems/ResourceEconomy';
 import { SynergySystem } from '../../src/systems/SynergySystem';
 import { TechnologySystem } from '../../src/systems/TechnologySystem';
 import { TowerSystem } from '../../src/systems/TowerSystem';
-import { TRAINING_ACTIVITIES, TrainingAcademyEngine } from '../../src/systems/TrainingAcademyEngine';
+import { STANDARDIZED_POOLS, TRAINING_ACTIVITIES, TrainingAcademyEngine } from '../../src/systems/TrainingAcademyEngine';
 
 describe('V2.0 Systems, Content Validation, Heroes, Synergies, Challenges & Training Academy', () => {
   it('validates all 10 towers, 4 heroes, 12 enemies, 48 missions, and tech tree references', () => {
@@ -369,5 +369,103 @@ describe('V2.0 Systems, Content Validation, Heroes, Synergies, Challenges & Trai
     const step = EnemySystem.updateEnemy(boss2, 0.1, path);
     expect(step.bossPhaseTriggered).toBe(2);
     expect(step.spawnedMinions.some((m) => m.type === 'ghost')).toBe(true);
+  });
+
+  it('validates STANDARDIZED_POOLS characters, ahead-of-curriculum drills, null rhythm consistency on tiny samples, and academy regressions', () => {
+    // 1. Beginner standardized pool strictly uses home row + g/h/;/space
+    const beginnerAllowed = new Set(['f', 'j', 'd', 'k', 's', 'l', 'a', 'g', 'h', ';', ' ']);
+    for (const lang of ['pl', 'en'] as const) {
+      for (const text of STANDARDIZED_POOLS.beginner[lang]) {
+        for (const ch of text) {
+          expect(beginnerAllowed.has(ch), `Unexpected char '${ch}' in beginner ${lang} pool: "${text}"`).toBe(true);
+        }
+      }
+    }
+
+    // 2. Ahead-of-curriculum drills are explicitly marked and never unlock campaign missions/keys
+    const diacriticsDef = TRAINING_ACTIVITIES.find((a) => a.id === 'diacritics')!;
+    const uppercaseDef = TRAINING_ACTIVITIES.find((a) => a.id === 'uppercase')!;
+    expect(diacriticsDef.isAheadOfCurriculum).toBe(true);
+    expect(uppercaseDef.isAheadOfCurriculum).toBe(true);
+
+    const svc = new PersistenceService();
+    const p1 = svc.getActiveProfile();
+    const completedBefore = Object.keys(p1.completedMissions).length;
+    const drill = new TrainingAcademyEngine({ profile: p1, mode: 'training', activityKind: 'diacritics', language: 'pl' });
+    for (let i = 0; i < 4; i++) {
+      const ch = drill.typingEngine.getExpectedChar();
+      if (ch) drill.handleKey(ch, 1000 + i * 250, false);
+    }
+    const tinyDrillResult = drill.finishAndRecord(false);
+    // Tiny sample (< 8 intervals) must return null consistency instead of fake 100%
+    expect(tinyDrillResult.consistency).toBeNull();
+    expect(Object.keys(p1.completedMissions).length).toBe(completedBefore);
+
+    // 3. Aborted timed test is never qualified
+    const abortedTest = new TrainingAcademyEngine({
+      profile: p1,
+      mode: 'assessment',
+      durationSec: 30,
+      pool: 'beginner',
+      language: 'pl',
+    });
+    let t = 2000;
+    for (let i = 0; i < 25; i++) {
+      const ch = abortedTest.typingEngine.getExpectedChar();
+      if (ch) abortedTest.handleKey(ch, (t += 220), false);
+    }
+    abortedTest.tick(15);
+    const abortRes = abortedTest.finishAndRecord(true);
+    expect(abortRes.qualified).toBe(false);
+    expect(abortRes.consistency).not.toBeNull();
+    expect((p1.standardizedTestRecords ?? []).length).toBe(0);
+
+    // 4. Focus loss invalidates timed test qualification
+    const focusLostTest = new TrainingAcademyEngine({
+      profile: p1,
+      mode: 'assessment',
+      durationSec: 30,
+      pool: 'beginner',
+      language: 'pl',
+    });
+    for (let i = 0; i < 25; i++) {
+      const ch = focusLostTest.typingEngine.getExpectedChar();
+      if (ch) focusLostTest.handleKey(ch, (t += 200), false);
+    }
+    focusLostTest.markFocusLost();
+    focusLostTest.tick(30);
+    const focusRes = focusLostTest.finishAndRecord(false);
+    expect(focusRes.focusLostInvalidated).toBe(true);
+    expect(focusRes.qualified).toBe(false);
+
+    // 5. Valid timed test qualifies, persists across JSON export/import, and stays isolated to ownerProfileId
+    const p2 = svc.createProfile('Ola', '🦉');
+    const validTest = new TrainingAcademyEngine({
+      profile: p1,
+      mode: 'assessment',
+      durationSec: 30,
+      pool: 'beginner',
+      language: 'pl',
+    });
+    for (let i = 0; i < 30; i++) {
+      const ch = validTest.typingEngine.getExpectedChar();
+      if (ch) validTest.handleKey(ch, (t += 200), false);
+    }
+    validTest.tick(30);
+    // Simulate switching active profile before finishing
+    svc.switchProfile(p2.id);
+    const validRes = validTest.finishAndRecord(false);
+    expect(validRes.qualified).toBe(true);
+    expect((p1.standardizedTestRecords ?? []).length).toBe(1);
+    expect((p2.standardizedTestRecords ?? []).length).toBe(0);
+
+    // Export -> fresh PersistenceService import preserves standardizedTestRecords
+    const exported = svc.exportSaveJson();
+    localStorage.clear();
+    const svc2 = new PersistenceService();
+    expect(svc2.importSaveJson(exported).success).toBe(true);
+    const reloadedP1 = svc2.getAllProfiles().find((p) => p.id === p1.id)!;
+    expect(reloadedP1.standardizedTestRecords?.length).toBe(1);
+    expect(reloadedP1.standardizedTestRecords?.[0].wpm).toBe(validRes.wpm);
   });
 });

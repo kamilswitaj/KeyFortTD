@@ -308,8 +308,9 @@ export class CampaignSimulator {
       challengeConfig,
     });
 
-    const effectiveLoadout = challengeConfig.maxTowerTypes
-      ? (options.customTowerLoadout ?? ['gun', 'tesla']).slice(0, challengeConfig.maxTowerTypes)
+    const maxTypes = challengeConfig.completionCriteria.maxTowerTypes;
+    const effectiveLoadout = maxTypes
+      ? (options.customTowerLoadout ?? ['gun', 'tesla']).slice(0, maxTypes)
       : options.customTowerLoadout;
 
     const secPerChar = persona.wpm > 0 ? 60 / (persona.wpm * 5) : 999999;
@@ -365,12 +366,13 @@ export class CampaignSimulator {
     const correctChars = session.typingEngine.getTotalCorrect();
     const wpm = session.typingEngine.getWpm();
 
+    const remainingLives = session.getLives();
     const evalRes = ChallengeEngine.evaluateChallengeCompletion(challengeConfig, {
-      victory: session.getLives() > 0 && session.areAllWavesCleared(),
-      accuracy,
+      remainingLives: session.areAllWavesCleared() ? remainingLives : 0,
+      cumulativeBaseDamage: baseDamage,
       correctChars,
-      baseDamage,
-      towerTypesUsed,
+      accuracy,
+      usedTowerTypes: towerTypesUsed,
     });
 
     const score = Math.round(
@@ -391,7 +393,7 @@ export class CampaignSimulator {
       baseDamage,
       wavesCompleted,
       towerTypesUsed,
-      heroId: profile.selectedHeroId,
+      heroId: profile.selectedHeroId ?? null,
       status: evalRes.passed ? 'completed' : 'failed',
     });
 
@@ -401,7 +403,7 @@ export class CampaignSimulator {
       difficulty,
       persona: personaId,
       passed: evalRes.passed,
-      reason: evalRes.reason,
+      reason: evalRes.reasonPl,
       awardedTechPoints: reward.awardedTechPoints,
       score,
       baseDamage,
