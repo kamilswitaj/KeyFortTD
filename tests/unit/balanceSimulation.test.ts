@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { getMissionById, MISSIONS_DATA } from '../../src/data/curriculumData';
+import { TOWER_ORDER } from '../../src/data/towersData';
 import { PersistenceService } from '../../src/services/PersistenceService';
 import { CampaignSimulator } from '../../src/systems/CampaignSimulator';
+import { ChallengeEngine, ChallengeKind, TECH_TREE_DATA } from '../../src/systems/ChallengeEngine';
 import { GameSessionEngine } from '../../src/systems/GameSessionEngine';
+import { HeroId } from '../../src/types';
 
 describe('Full 48-Mission Campaign Headless Balance Simulation', () => {
   it('allows a complete beginner (~8 WPM with frequent errors) to complete introductory missions (w1_m1 - w1_m3)', () => {
@@ -84,5 +87,76 @@ describe('Full 48-Mission Campaign Headless Balance Simulation', () => {
 
     expect(session.getLives()).toBe(0);
     expect(session.isVictory()).toBe(false);
+  });
+
+  it('verifies V2 towers, all 4 heroes, all 5 tech modifiers, and 3 difficulties without making classic 6 towers obsolete', () => {
+    const allTechIds = TECH_TREE_DATA.map((t) => t.id);
+    const heroes: HeroId[] = ['guardian', 'engineer', 'ranger', 'arcanist'];
+    for (const heroId of heroes) {
+      const res = CampaignSimulator.simulateMission('w6_m6', 'intermediate', ['gun', 'cannon', 'frost', 'tesla'], {
+        difficulty: 'tactical',
+        heroId,
+        unlockedTechs: allTechIds,
+      });
+      expect(res.victory, `Classic 6 towers with hero ${heroId} failed w6_m6 tactical`).toBe(true);
+    }
+
+    // V2 towers + synergies remain viable across all 3 difficulties
+    for (const difficulty of ['relaxed', 'standard', 'tactical'] as const) {
+      const v2Res = CampaignSimulator.simulateMission('w7_m4', 'intermediate', ['flame', 'drone', 'command', 'laser'], {
+        difficulty,
+        heroId: 'arcanist',
+        unlockedTechs: allTechIds,
+        unlockedTowers: [...TOWER_ORDER],
+      });
+      expect(v2Res.victory, `V2 towers failed w7_m4 on ${difficulty}`).toBe(true);
+    }
+  });
+
+  it('distinguishes slow & accurate vs fast & inaccurate personas on high-accuracy missions', () => {
+    const slowAccurate = CampaignSimulator.simulateMission('w4_m2', 'slow_accurate');
+    const fastInaccurate = CampaignSimulator.simulateMission('w8_m6', 'fast_inaccurate');
+    expect(slowAccurate.victory).toBe(true);
+    expect(slowAccurate.typingAccuracy).toBeGreaterThanOrEqual(0.92);
+    expect(fastInaccurate.educationalCompleted).toBe(false);
+    expect(fastInaccurate.victory).toBe(false);
+  });
+
+  it('simulates all 5 challenge kinds (precision, no_leak, limited_gold, two_towers, boss_rush) verifying restrictions and outcomes', () => {
+    const kinds: ChallengeKind[] = ['precision', 'no_leak', 'limited_gold', 'two_towers', 'boss_rush'];
+    const baseChallenge = ChallengeEngine.getDailyChallenge('intermediate', new Date('2026-11-26T12:00:00Z'));
+
+    for (const kind of kinds) {
+      const ch = {
+        ...baseChallenge,
+        id: `sim_ch_${kind}`,
+        kind,
+        missionId: kind === 'boss_rush' ? 'w3_m6' : 'w3_m3',
+        targetAccuracy: kind === 'precision' ? 0.94 : 0.85,
+        minTypedChars: 40,
+      };
+
+      const adv = CampaignSimulator.simulateChallenge(ch, 'standard', 'advanced', {
+        heroId: 'guardian',
+        unlockedTechs: ['tech_kinetic_1', 'tech_energy_1', 'tech_defense_1'],
+      });
+      expect(adv.passed, `Advanced failed ${kind} challenge: ${adv.reason ?? ''}`).toBe(true);
+      expect(adv.awardedTechPoints).toBeGreaterThan(0);
+
+      if (kind === 'two_towers') {
+        expect(adv.towerTypesUsed.length).toBeLessThanOrEqual(2);
+      }
+      if (kind === 'no_leak') {
+        expect(adv.baseDamage).toBe(0);
+      }
+
+      const nonTyper = CampaignSimulator.simulateChallenge(ch, 'standard', 'non_typer');
+      expect(nonTyper.passed, `Non-typer bypassed ${kind} challenge`).toBe(false);
+
+      if (kind === 'precision') {
+        const sloppy = CampaignSimulator.simulateChallenge(ch, 'standard', 'fast_inaccurate');
+        expect(sloppy.passed, 'Fast inaccurate should fail precision challenge').toBe(false);
+      }
+    }
   });
 });
