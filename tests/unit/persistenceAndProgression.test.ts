@@ -6,6 +6,7 @@ import { ChallengeEngine } from '../../src/systems/ChallengeEngine';
 import { GameSessionEngine } from '../../src/systems/GameSessionEngine';
 import { ProgressionEngine } from '../../src/systems/ProgressionEngine';
 import { StatisticsEngine } from '../../src/systems/StatisticsEngine';
+import { STANDARDIZED_RULES_VERSION } from '../../src/systems/TrainingAcademyEngine';
 
 describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, and AchievementSystem', () => {
   beforeEach(() => {
@@ -523,6 +524,25 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     expect(session.isEducationalCompleted()).toBe(true);
     expect(session.isVictory()).toBe(true);
     expect(session.isSessionOver()).toBe(true);
+  });
+
+  it('preserves current-version standardized assessment records across reload and import', () => {
+    const save = PersistenceService.createDefaultSaveData();
+    const profile = save.profiles[save.activeProfileId];
+    profile.standardizedTestRecords = [
+      { rulesVersion: STANDARDIZED_RULES_VERSION, durationSec: 60, pool: 'beginner', language: 'pl',
+        wpm: 20, accuracy: 0.97, consistency: null, timestamp: 1000 },
+      { rulesVersion: 1, durationSec: 30, pool: 'full', language: 'en',
+        wpm: 34, accuracy: 0.95, consistency: 84, timestamp: 900 },
+      { rulesVersion: 999, durationSec: 60, pool: 'full', language: 'pl',
+        wpm: 99, accuracy: 1, consistency: 100, timestamp: 800 },
+    ];
+    const migrated = PersistenceService.migrateAndValidateSaveData(JSON.parse(JSON.stringify(save)));
+    const records = migrated.profiles[save.activeProfileId].standardizedTestRecords!;
+    expect(records.map(r => r.rulesVersion)).toEqual([STANDARDIZED_RULES_VERSION, 1, undefined]);
+    expect(records[0].consistency).toBeNull();
+    const roundTripped = PersistenceService.migrateAndValidateSaveData(JSON.parse(JSON.stringify(migrated)));
+    expect(roundTripped.profiles[save.activeProfileId].standardizedTestRecords).toEqual(records);
   });
 
   it('migrates v4 saves to v5 preserving achievements/XP/tech, populating challengeBestByKey without inventing missing difficulty, and preventing duplicate tech point rewards', () => {

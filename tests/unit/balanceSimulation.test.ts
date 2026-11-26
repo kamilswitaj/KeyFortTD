@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getMissionById, MISSIONS_DATA } from '../../src/data/curriculumData';
 import { TOWER_ORDER } from '../../src/data/towersData';
 import { PersistenceService } from '../../src/services/PersistenceService';
 import { CampaignSimulator } from '../../src/systems/CampaignSimulator';
 import { ChallengeEngine, ChallengeKind, TECH_TREE_DATA } from '../../src/systems/ChallengeEngine';
 import { GameSessionEngine } from '../../src/systems/GameSessionEngine';
+import { WaveSystem } from '../../src/systems/WaveSystem';
 import { HeroId } from '../../src/types';
 
 describe('Full 48-Mission Campaign Headless Balance Simulation', () => {
@@ -120,6 +121,25 @@ describe('Full 48-Mission Campaign Headless Balance Simulation', () => {
     expect(slowAccurate.typingAccuracy).toBeGreaterThanOrEqual(0.92);
     expect(fastInaccurate.educationalCompleted).toBe(false);
     expect(fastInaccurate.victory).toBe(false);
+  });
+
+  it('uses cumulative damage, completed waves and historically used tower types in challenge simulation results', () => {
+    const base = ChallengeEngine.getDailyChallenge('intermediate', new Date('2026-11-26T12:00:00Z'));
+    const challenge = { ...base, kind: 'no_leak' as const, missionId: 'w3_m3', maxLeaksAllowed: 0 };
+    const damageSpy = vi.spyOn(GameSessionEngine.prototype, 'getCumulativeBaseDamage').mockReturnValue(4);
+    const wavesSpy = vi.spyOn(WaveSystem.prototype, 'getCompletedWavesCount').mockReturnValue(2);
+    const typesSpy = vi.spyOn(GameSessionEngine.prototype, 'getUsedTowerTypes').mockReturnValue(['gun', 'cannon', 'frost']);
+    try {
+      const result = CampaignSimulator.simulateChallenge(challenge, 'standard', 'advanced');
+      expect(result.baseDamage).toBe(4);
+      expect(result.wavesCompleted).toBe(2);
+      expect(result.towerTypesUsed).toEqual(['gun', 'cannon', 'frost']);
+      expect(result.passed).toBe(false);
+    } finally {
+      damageSpy.mockRestore();
+      wavesSpy.mockRestore();
+      typesSpy.mockRestore();
+    }
   });
 
   it('simulates all 5 challenge kinds (precision, no_leak, limited_gold, two_towers, boss_rush) verifying restrictions and outcomes', () => {
