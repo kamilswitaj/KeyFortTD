@@ -259,6 +259,33 @@ describe('V2.0 Systems, Content Validation, Heroes, Synergies, Challenges & Trai
     expect(advProfile.completedMissions[twoTowersConfig.sourceMissionId]).toBeUndefined();
   });
 
+  it('compares only equivalent challenge difficulty and preserves separate best results from bounded history', () => {
+    const challenge = ChallengeEngine.getDailyChallenge('home_anchors', new Date('2026-11-26T12:00:00Z'));
+    const standard = ChallengeEngine.buildChallengeSessionConfig(challenge, 'standard');
+    const relaxed = ChallengeEngine.buildChallengeSessionConfig(challenge, 'relaxed');
+    const a = PersistenceService.createDefaultProfile('a', 'A');
+    const b = PersistenceService.createDefaultProfile('b', 'B');
+    const result = (profileId: string, difficulty: 'standard' | 'relaxed', score: number) => ({
+      challengeId: challenge.id, rulesetVersion: challenge.rulesetVersion, profileId, timestamp: 12345,
+      difficulty, score, accuracy: 0.95, correctChars: 80, errors: 4, durationSec: 60,
+      wpm: 16, baseDamage: 0, wavesCompleted: 3, towerTypesUsed: ['gun'] as const,
+      heroId: null, status: 'completed' as const
+    });
+    ChallengeEngine.recordChallengeCompletion(a, standard, {...result('a', 'standard', 400), towerTypesUsed: ['gun']});
+    ChallengeEngine.recordChallengeCompletion(a, relaxed, {...result('a', 'relaxed', 1500), towerTypesUsed: ['gun']});
+    ChallengeEngine.recordChallengeCompletion(b, standard, {...result('b', 'standard', 600), towerTypesUsed: ['gun']});
+    expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion,'standard')
+      .map(x => [x.profileId,x.score,x.difficulty])).toEqual([['b',600,'standard'],['a',400,'standard']]);
+    expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion,'relaxed')
+      .map(x => [x.profileId,x.score])).toEqual([['a',1500]]);
+    a.challengeHistory = [];
+    expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion,'relaxed')
+      .map(x => [x.profileId,x.score])).toEqual([['a',1500]]);
+    expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion,'standard')
+      .map(x => x.profileId)).toEqual(['b']);
+    expect(ChallengeEngine.getChallengeLeaderboard([a,b],challenge.id,challenge.rulesetVersion+1,'standard')).toEqual([]);
+  });
+
   it('applies all 5 TechnologySystem modifiers, validates purchases, and applies Guardian aura & explicitNoHero', () => {
     const profile = PersistenceService.createDefaultProfile('p_tech', 'TechUser');
     profile.techPoints = 3;

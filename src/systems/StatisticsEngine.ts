@@ -156,7 +156,7 @@ export class StatisticsEngine {
    */
   public static getRecentWeightedWpm(profile: PlayerProfile, limit: number = 5): number | null {
     const validSessions = profile.sessionHistory
-      .filter((s) => s.mode !== 'sandbox' && s.charsTyped > 0 && s.durationSec >= 2)
+      .filter((s) => s.mode !== 'sandbox' && !s.unrestrictedResources && s.charsTyped > 0 && s.durationSec >= 2)
       .slice(-limit);
     if (validSessions.length === 0) return null;
 
@@ -176,7 +176,7 @@ export class StatisticsEngine {
     wpmDelta: number | null;
   } {
     const valid = profile.sessionHistory.filter(
-      (s) => s.mode !== 'sandbox' && s.charsTyped + s.errors >= 10 && s.durationSec >= 2
+      (s) => s.mode !== 'sandbox' && !s.unrestrictedResources && s.charsTyped + s.errors >= 10 && s.durationSec >= 2
     );
     if (valid.length < 2) {
       return { accuracyDelta: null, wpmDelta: null };

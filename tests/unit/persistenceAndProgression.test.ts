@@ -11,6 +11,20 @@ describe('PersistenceService, Migration, ProgressionEngine, StatisticsEngine, an
     localStorage.clear();
   });
 
+  it('does not treat unrestricted sessions as recent typing records or improvement evidence', () => {
+    const profile = PersistenceService.createDefaultProfile('p1', 'Tester');
+    const entry = (timestamp: number, unrestrictedResources: boolean, charsTyped: number) => ({
+      timestamp, missionId: 'w1_m1', mode: 'campaign' as const, difficulty: 'standard' as const,
+      status: 'completed' as const, wpm: charsTyped, accuracy: 1, durationSec: 10,
+      charsTyped, errors: 0, maxCombo: charsTyped, unrestrictedResources
+    });
+    profile.sessionHistory.push(entry(1, false, 25), entry(2, true, 999));
+    expect(StatisticsEngine.getRecentWeightedWpm(profile)).toBe(30);
+    expect(StatisticsEngine.getImprovementTrends(profile)).toEqual({accuracyDelta: null, wpmDelta: null});
+    profile.sessionHistory.push(entry(3, false, 30));
+    expect(StatisticsEngine.getRecentWeightedWpm(profile)).toBe(33);
+  });
+
   it('blocks stale-tab writes without replacing live profile objects or falsely reporting successful imports', () => {
     const a = new PersistenceService();
     const b = new PersistenceService();
