@@ -1,7 +1,9 @@
-import { getMissionById, MISSIONS_DATA, WORLDS_DATA } from '../data/curriculumData';
+import { getMissionById, WORLDS_DATA } from '../data/curriculumData';
+import { TOWER_ORDER } from '../data/towersData';
 import { PersistenceService } from '../services/PersistenceService';
-import { MissionDefinition, TowerType, UpgradeBranch } from '../types';
+import { DifficultyLevel, HeroId, MissionDefinition, TowerType, UpgradeBranch } from '../types';
 import { SeededRandom } from '../utils/rng';
+import { ChallengeEngine, ChallengeSessionConfig, DeterministicChallenge } from './ChallengeEngine';
 import { GameSessionEngine } from './GameSessionEngine';
 import { ProgressionEngine } from './ProgressionEngine';
 
@@ -10,6 +12,8 @@ export type SimulatedPersonaId =
   | 'learning'
   | 'intermediate'
   | 'advanced'
+  | 'slow_accurate'
+  | 'fast_inaccurate'
   | 'non_typer'
   | 'poor_tactician';
 
@@ -50,6 +54,20 @@ export const PERSONA_CONFIGS: Record<SimulatedPersonaId, PersonaConfig> = {
     tacticalSkill: 'optimal',
     useAbilities: true,
   },
+  slow_accurate: {
+    id: 'slow_accurate',
+    wpm: 14,
+    accuracy: 0.98,
+    tacticalSkill: 'counter_aware',
+    useAbilities: true,
+  },
+  fast_inaccurate: {
+    id: 'fast_inaccurate',
+    wpm: 45,
+    accuracy: 0.72,
+    tacticalSkill: 'counter_aware',
+    useAbilities: false,
+  },
   non_typer: {
     id: 'non_typer',
     wpm: 0,
@@ -85,28 +103,69 @@ export interface MissionSimulationResult {
   simDurationSec: number;
 }
 
+export interface MissionSimulationOptions {
+  difficulty?: DifficultyLevel;
+  heroId?: HeroId | null;
+  unlockedTechs?: string[];
+  unlockedTowers?: TowerType[];
+}
+
+export interface ChallengeSimulationResult {
+  challengeId: string;
+  kind: DeterministicChallenge['kind'];
+  difficulty: DifficultyLevel;
+  persona: SimulatedPersonaId;
+  passed: boolean;
+  reason?: string;
+  awardedTechPoints: number;
+  score: number;
+  baseDamage: number;
+  wavesCompleted: number;
+  towerTypesUsed: TowerType[];
+  accuracy: number;
+  wpm: number;
+}
+
 export class CampaignSimulator {
   public static simulateMission(
     missionOrId: MissionDefinition | string,
     personaId: SimulatedPersonaId,
-    customTowerLoadout?: TowerType[]
+    customTowerLoadout?: TowerType[],
+    options: MissionSimulationOptions = {}
   ): MissionSimulationResult {
     const mission =
       typeof missionOrId === 'string' ? getMissionById(missionOrId)! : missionOrId;
     const persona = PERSONA_CONFIGS[personaId];
-    const rng = new SeededRandom(`${mission.id}_${personaId}`);
+    const difficulty = options.difficulty ?? 'standard';
+    const rng = new SeededRandom(`${mission.id}_${personaId}_${difficulty}`);
 
     const profile = PersistenceService.createDefaultProfile(`sim_${personaId}`, personaId);
-    // Unlock towers appropriate for the mission's world
-    for (const w of WORLDS_DATA) {
-      if (w.id <= mission.worldId && w.unlockedTower) {
-        if (!profile.unlockedTowers.includes(w.unlockedTower)) {
-          profile.unlockedTowers.push(w.unlockedTower);
+    profile.settings.difficulty = difficulty;
+    if (options.heroId === null) {
+      profile.explicitNoHero = true;
+      profile.selectedHeroId = null;
+    } else if (options.heroId) {
+      profile.explicitNoHero = false;
+      profile.selectedHeroId = options.heroId;
+      profile.unlockedHeroes = [options.heroId];
+    }
+    if (options.unlockedTechs) {
+      profile.unlockedTechs = [...options.unlockedTechs];
+    }
+    if (options.unlockedTowers) {
+      profile.unlockedTowers = [...options.unlockedTowers];
+    } else {
+      // Unlock towers appropriate for the mission's world
+      for (const w of WORLDS_DATA) {
+        if (w.id <= mission.worldId && w.unlockedTower) {
+          if (!profile.unlockedTowers.includes(w.unlockedTower)) {
+            profile.unlockedTowers.push(w.unlockedTower);
+          }
         }
       }
-    }
-    if (mission.worldId >= 2 && !profile.unlockedTowers.includes('reactor')) {
-      profile.unlockedTowers.push('reactor');
+      if (mission.worldId >= 2 && !profile.unlockedTowers.includes('reactor')) {
+        profile.unlockedTowers.push('reactor');
+      }
     }
     profile.unlockedUpgradeTiers = mission.worldId >= 3 ? 3 : mission.worldId >= 2 ? 2 : 1;
 
@@ -214,6 +273,147 @@ export class CampaignSimulator {
     };
   }
 
+  public static simulateChallenge(
+    challenge: DeterministicChallenge,
+    difficulty: DifficultyLevel,
+    personaId: SimulatedPersonaId,
+    options: Omit<MissionSimulationOptions, 'difficulty'> & { customTowerLoadout?: TowerType[] } = {}
+  ): ChallengeSimulationResult {
+    const persona = PERSONA_CONFIGS[personaId];
+    const rng = new SeededRandom(`${challenge.id}_${personaId}_${difficulty}`);
+    const challengeConfig: ChallengeSessionConfig = ChallengeEngine.buildChallengeSessionConfig(challenge, difficulty);
+    const baseMission = getMissionById(challenge.missionId)!;
+    const profile = PersistenceService.createDefaultProfile(`sim_${personaId}`, personaId);
+    profile.settings.difficulty = difficulty;
+    profile.unlockedTowers = options.unlockedTowers
+      ? [...options.unlockedTowers]
+      : [...TOWER_ORDER];
+    profile.unlockedUpgradeTiers = 3;
+    if (options.heroId === null) {
+      profile.explicitNoHero = true;
+      profile.selectedHeroId = null;
+    } else if (options.heroId) {
+      profile.explicitNoHero = false;
+      profile.selectedHeroId = options.heroId;
+      profile.unlockedHeroes = [options.heroId];
+    }
+    if (options.unlockedTechs) {
+      profile.unlockedTechs = [...options.unlockedTechs];
+    }
+
+    const session = new GameSessionEngine({
+      mode: 'challenge',
+      mission: baseMission,
+      profile,
+      challengeConfig,
+    });
+
+    const maxTypes = challengeConfig.completionCriteria.maxTowerTypes;
+    const effectiveLoadout = maxTypes
+      ? (options.customTowerLoadout ?? ['gun', 'tesla']).slice(0, maxTypes)
+      : options.customTowerLoadout;
+
+    const secPerChar = persona.wpm > 0 ? 60 / (persona.wpm * 5) : 999999;
+    let charTimerSec = 0;
+    let simTimeMs = 1000;
+
+    CampaignSimulator.applyTacticalDecisions(session, persona, profile.unlockedTowers, effectiveLoadout);
+
+    const maxSimSteps = 6500;
+    for (let step = 0; step < maxSimSteps; step++) {
+      if (session.isSessionOver()) break;
+      if (!session.waveSystem.isWaveActive() && session.waveSystem.hasMoreWaves()) {
+        CampaignSimulator.applyTacticalDecisions(session, persona, profile.unlockedTowers, effectiveLoadout);
+        session.startNextWave();
+      }
+      const dtSec = 0.1;
+      simTimeMs += 100;
+
+      if (persona.wpm > 0) {
+        charTimerSec += dtSec;
+        while (charTimerSec >= secPerChar && !session.isSessionOver()) {
+          charTimerSec -= secPerChar;
+          const expected = session.typingEngine.getExpectedChar();
+          if (!expected) break;
+          if (rng.next() <= persona.accuracy) {
+            session.handleKeyInput(expected, simTimeMs, false);
+          } else {
+            session.handleKeyInput(expected === 'f' ? 'j' : 'f', simTimeMs, false);
+          }
+        }
+      }
+
+      if (step % 25 === 0 && !session.isFollowUpPracticeActive()) {
+        CampaignSimulator.applyTacticalDecisions(session, persona, profile.unlockedTowers, effectiveLoadout);
+      }
+
+      if (persona.useAbilities && session.getEnemies().length >= 3) {
+        if (session.canUseAbility('overdrive')) {
+          session.triggerTacticalAbility('overdrive');
+        } else if (session.canUseAbility('emp')) {
+          session.triggerTacticalAbility('emp');
+        }
+      }
+
+      session.update(dtSec);
+      if (persona.wpm === 0 && session.areAllWavesCleared()) break;
+    }
+
+    const baseDamage = Math.max(0, session.getMaxLives() - session.getLives());
+    const wavesCompleted = session.waveSystem.getCurrentWaveNumber();
+    const towerTypesUsed = Array.from(new Set(session.getTowers().map((t) => t.type)));
+    const accuracy = session.typingEngine.getAccuracy();
+    const correctChars = session.typingEngine.getTotalCorrect();
+    const wpm = session.typingEngine.getWpm();
+
+    const remainingLives = session.getLives();
+    const evalRes = ChallengeEngine.evaluateChallengeCompletion(challengeConfig, {
+      remainingLives: session.areAllWavesCleared() ? remainingLives : 0,
+      cumulativeBaseDamage: baseDamage,
+      correctChars,
+      accuracy,
+      usedTowerTypes: towerTypesUsed,
+    });
+
+    const score = Math.round(
+      correctChars * 10 * (0.5 + accuracy * 0.5) + wavesCompleted * 100 - baseDamage * 50
+    );
+    const reward = ChallengeEngine.recordChallengeCompletion(profile, challengeConfig, {
+      challengeId: challenge.id,
+      rulesetVersion: challenge.rulesetVersion,
+      profileId: profile.id,
+      timestamp: simTimeMs,
+      difficulty,
+      score,
+      accuracy,
+      correctChars,
+      errors: session.typingEngine.getTotalErrors(),
+      durationSec: Math.round((simTimeMs - 1000) / 1000),
+      wpm,
+      baseDamage,
+      wavesCompleted,
+      towerTypesUsed,
+      heroId: profile.selectedHeroId ?? null,
+      status: evalRes.passed ? 'completed' : 'failed',
+    });
+
+    return {
+      challengeId: challenge.id,
+      kind: challenge.kind,
+      difficulty,
+      persona: personaId,
+      passed: evalRes.passed,
+      reason: evalRes.reasonPl,
+      awardedTechPoints: reward.awardedTechPoints,
+      score,
+      baseDamage,
+      wavesCompleted,
+      towerTypesUsed,
+      accuracy: Number(accuracy.toFixed(2)),
+      wpm,
+    };
+  }
+
   private static applyTacticalDecisions(
     session: GameSessionEngine,
     persona: PersonaConfig,
@@ -271,6 +471,9 @@ export class CampaignSimulator {
     skill: PersonaConfig['tacticalSkill'],
     allowed: TowerType[]
   ): TowerType {
+    if (allowed.length <= 4) {
+      return allowed[index % allowed.length];
+    }
     if (skill === 'basic') {
       return index % 2 === 0 ? 'gun' : allowed.includes('cannon') ? 'cannon' : 'gun';
     }
@@ -279,8 +482,8 @@ export class CampaignSimulator {
       w.groups.some((g) => g.enemyType === 'ghost' || g.enemyType === 'shield')
     );
     const preferredOrder: TowerType[] = hasGhostsOrShields
-      ? ['tesla', 'gun', 'frost', 'cannon', 'sniper', 'reactor', 'tesla', 'sniper']
-      : ['gun', 'cannon', 'frost', 'sniper', 'tesla', 'reactor', 'gun', 'sniper'];
+      ? ['tesla', 'gun', 'laser', 'frost', 'drone', 'cannon', 'flame', 'sniper', 'reactor', 'command']
+      : ['gun', 'cannon', 'frost', 'sniper', 'tesla', 'laser', 'flame', 'drone', 'reactor', 'command'];
     for (let offset = 0; offset < preferredOrder.length; offset++) {
       const candidate = preferredOrder[(index + offset) % preferredOrder.length];
       if (allowed.includes(candidate)) {

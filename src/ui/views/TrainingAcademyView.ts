@@ -21,7 +21,7 @@ export interface TrainingViewState {
     accuracy: number;
     correct: number;
     errors: number;
-    consistency: number;
+    consistency: number | null;
     qualified: boolean;
   } | null;
 }
@@ -45,7 +45,7 @@ export class TrainingAcademyView {
               <span>⚡ <strong>${state.lastResult.wpm} WPM</strong></span>
               <span>🎯 <strong>${state.lastResult.correct + state.lastResult.errors > 0 ? `${Math.round(state.lastResult.accuracy * 100)}%` : '—'}</strong></span>
               <span>⌨️ <strong>${state.lastResult.correct}</strong> ${i18n.pick('znaków', 'chars')}</span>
-              <span>📈 ${i18n.pick('Spójność:', 'Consistency:')} <strong>${state.lastResult.consistency}%</strong></span>
+              <span>📈 ${i18n.pick('Spójność:', 'Consistency:')} <strong>${state.lastResult.consistency !== null ? `${state.lastResult.consistency}%` : '—'}</strong></span>
             </div>
           </div>
         </div>`
@@ -53,6 +53,12 @@ export class TrainingAcademyView {
 
     const activitiesHtml = TRAINING_ACTIVITIES.map((act) => {
       const isSelected = state.selectedActivity === act.id;
+      const aheadBadgeHtml = act.isAheadOfCurriculum
+        ? `<div style="margin-top:0.3rem; font-size:0.72rem; color:#fbbf24;">✦ ${i18n.pick(
+            'Dobrowolny trening z wyprzedzeniem (nie odblokowuje klawiszy kampanii)',
+            'Voluntary ahead-of-curriculum drill (does not unlock campaign keys)'
+          )}</div>`
+        : '';
       return `
         <div class="mode-card" style="border-color:${isSelected ? '#38bdf8' : 'rgba(148,163,184,0.2)'}; cursor:pointer;" data-select-activity="${act.id}" data-testid="training-card-${act.id}">
           <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -60,6 +66,7 @@ export class TrainingAcademyView {
             <span class="key-obj-pill">${escapeHtml(i18n.pick(act.themePl, act.themeEn))}</span>
           </div>
           <p style="font-size:0.8rem; color:#94a3b8; margin-top:0.3rem;">${escapeHtml(i18n.pick(act.descPl, act.descEn))}</p>
+          ${aheadBadgeHtml}
           <button class="primary-cta-btn" style="margin-top:0.6rem; padding:0.4rem 0.8rem; font-size:0.78rem;" data-start-training="${act.id}" data-testid="start-training-${act.id}">
             ▶ ${i18n.pick('Rozpocznij ćwiczenie', 'Start Drill')}
           </button>
@@ -92,7 +99,7 @@ export class TrainingAcademyView {
             <td>${escapeHtml(item.profile.avatarIcon)} <strong>${escapeHtml(item.profile.name)}</strong></td>
             <td style="color:#38bdf8; font-weight:800;">${item.record.wpm} WPM</td>
             <td>🎯 ${Math.round(item.record.accuracy * 100)}%</td>
-            <td>${item.record.consistency}%</td>
+            <td>${item.record.consistency !== null ? `${item.record.consistency}%` : '—'}</td>
             <td style="color:#94a3b8;">${new Date(item.record.timestamp).toLocaleDateString()}</td>
           </tr>`
             )

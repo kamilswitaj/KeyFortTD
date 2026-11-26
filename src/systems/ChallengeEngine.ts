@@ -1,5 +1,6 @@
 import { MISSIONS_DATA } from '../data/curriculumData';
 import {
+  ChallengeBestRecord,
   ChallengeCompletionRecord,
   DifficultyLevel,
   MissionDefinition,
@@ -9,6 +10,7 @@ import {
 } from '../types';
 
 export const CHALLENGE_RULESET_VERSION = 1;
+export const MAX_CHALLENGE_BEST_RECORDS = 240;
 
 export type ChallengeTier = 'home_anchors' | 'beginner' | 'intermediate' | 'full';
 export type ChallengeKind = 'no_leak' | 'precision' | 'limited_gold' | 'two_towers' | 'boss_rush';
@@ -425,6 +427,24 @@ export class ChallengeEngine {
     return { passed: true };
   }
 
+  public static getChallengeBestKey(
+    challengeId: string,
+    rulesetVersion: number,
+    difficulty: DifficultyLevel
+  ): string {
+    return `${challengeId}::v${rulesetVersion}::${difficulty}`;
+  }
+
+  public static pruneChallengeBestByKey(
+    bestByKey: Record<string, ChallengeBestRecord>,
+    maxEntries: number = MAX_CHALLENGE_BEST_RECORDS
+  ): Record<string, ChallengeBestRecord> {
+    const entries = Object.entries(bestByKey);
+    if (entries.length <= maxEntries) return bestByKey;
+    entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
+    return Object.fromEntries(entries.slice(0, maxEntries));
+  }
+
   public static recordChallengeCompletion(
     profile: PlayerProfile,
     config: ChallengeSessionConfig,
@@ -439,11 +459,44 @@ export class ChallengeEngine {
     }
 
     if (!profile.completedChallenges) profile.completedChallenges = {};
+    if (!profile.challengeBestByKey) profile.challengeBestByKey = {};
+    if (!profile.awardedChallengeIds) {
+      profile.awardedChallengeIds = Object.keys(profile.completedChallenges);
+    }
+
     const prev = profile.completedChallenges[config.challengeId];
     let awardedTechPoints = 0;
-    if (!prev) {
+    if (!profile.awardedChallengeIds.includes(config.challengeId)) {
+      profile.awardedChallengeIds.push(config.challengeId);
       awardedTechPoints = config.techPointReward;
       profile.techPoints = (profile.techPoints ?? 0) + awardedTechPoints;
+    }
+
+    const bestKey = ChallengeEngine.getChallengeBestKey(
+      config.challengeId,
+      config.rulesetVersion,
+      config.difficulty
+    );
+    const prevBest = profile.challengeBestByKey[bestKey];
+    if (
+      !prevBest ||
+      record.score > prevBest.score ||
+      (record.score === prevBest.score && record.accuracy > prevBest.accuracy)
+    ) {
+      profile.challengeBestByKey[bestKey] = {
+        challengeId: config.challengeId,
+        rulesetVersion: config.rulesetVersion,
+        difficulty: config.difficulty,
+        score: record.score,
+        accuracy: record.accuracy,
+        wpm: record.wpm,
+        correctChars: record.correctChars,
+        baseDamage: record.baseDamage,
+        wavesCompleted: record.wavesCompleted,
+        towerTypesUsed: [...record.towerTypesUsed],
+        timestamp: record.timestamp,
+      };
+      profile.challengeBestByKey = ChallengeEngine.pruneChallengeBestByKey(profile.challengeBestByKey);
     }
 
     if (!prev || record.score > prev.score) {
@@ -464,10 +517,10 @@ export class ChallengeEngine {
   }
 
   /**
-   * With a difficulty filter, select each player's best result from recorded
-   * completions of that exact ruleset/difficulty. The summary is best-overall,
-   * so using it alone would mix relaxed and tactical results in one ranking.
-   * Retained history is bounded; a matching best-overall summary is a safe fallback.
+   * With a difficulty filter, select each player's best result from persistent
+   * per-(challengeId, rulesetVersion, difficulty) records first, falling back to
+   * explicit-difficulty summaries or retained history for legacy profiles.
+   * Never fabricates a missing difficulty on legacy summaries.
    */
   public static getChallengeLeaderboard(
     allProfiles: PlayerProfile[],
@@ -495,15 +548,41 @@ export class ChallengeEngine {
         }
       };
 
+      if (difficulty) {
+        const key = ChallengeEngine.getChallengeBestKey(challengeId, rulesetVersion, difficulty);
+        const storedBest = p.challengeBestByKey?.[key];
+        if (storedBest && storedBest.rulesetVersion === rulesetVersion && storedBest.difficulty === difficulty) {
+          consider(storedBest.score, storedBest.accuracy, storedBest.wpm, storedBest.difficulty, storedBest.timestamp);
+        }
+      } else if (p.challengeBestByKey) {
+        for (const storedBest of Object.values(p.challengeBestByKey)) {
+          if (storedBest.challengeId === challengeId && storedBest.rulesetVersion === rulesetVersion) {
+            consider(storedBest.score, storedBest.accuracy, storedBest.wpm, storedBest.difficulty, storedBest.timestamp);
+          }
+        }
+      }
+
       const summary = p.completedChallenges?.[challengeId];
       if (summary && (summary.rulesetVersion ?? 1) === rulesetVersion) {
-        consider(summary.score, summary.accuracy, summary.wpm ?? 0, summary.difficulty ?? 'standard', summary.timestamp);
+        if (difficulty) {
+          if (summary.difficulty === difficulty) {
+            consider(summary.score, summary.accuracy, summary.wpm ?? 0, summary.difficulty, summary.timestamp);
+          }
+        } else {
+          consider(summary.score, summary.accuracy, summary.wpm ?? 0, summary.difficulty ?? 'standard', summary.timestamp);
+        }
       }
-      // Keep the original unfiltered API behavior for existing consumers.
+
       if (difficulty) {
         for (const record of p.challengeHistory ?? []) {
-          if (record.challengeId !== challengeId || record.rulesetVersion !== rulesetVersion ||
-              record.difficulty !== difficulty || record.status !== 'completed') continue;
+          if (
+            record.challengeId !== challengeId ||
+            record.rulesetVersion !== rulesetVersion ||
+            record.difficulty !== difficulty ||
+            record.status !== 'completed'
+          ) {
+            continue;
+          }
           consider(record.score, record.accuracy, record.wpm, record.difficulty, record.timestamp);
         }
       }
